@@ -4,7 +4,7 @@
 mod buffer;
 mod encoder;
 
-use buffer::DelayBuffer;
+use buffer::{DelayBuffer, MAX_DELAY_SECONDS, SAMPLE_RATE};
 use core::sync::atomic::{AtomicU32, Ordering};
 use daisy_embassy::new_daisy_board;
 use daisy_embassy::sdram::SDRAM_SIZE;
@@ -24,16 +24,15 @@ static DELAY_SAMPLES: AtomicU32 = AtomicU32::new(48000); // Start at 1 second
 // Task to read encoder and adjust delay
 #[embassy_executor::task]
 async fn encoder_reader(mut encoder: RotaryEncoder, button: ExtiInput<'static>) {
-    const SAMPLE_RATE: u32 = 48000; // 48kHz
-    const MAX_DELAY_SAMPLES: u32 = SAMPLE_RATE * 10; // 10 seconds max
+    const MAX_DELAY_SAMPLES: u32 = (SAMPLE_RATE as u32) * (MAX_DELAY_SECONDS as u32);
 
-    let mut delay_samples = 48000_u32; // Start at 1 second
-    let mut step_samples = 4800_u32; // 0.1s increments (48000 * 0.1)
+    let mut delay_samples = SAMPLE_RATE as u32; // Start at 1 second
+    let mut step_samples = (SAMPLE_RATE as u32) / 10; // 0.1s increments
 
     defmt::info!(
         "Encoder task started - delay: {}s, step: {}s",
-        delay_samples / SAMPLE_RATE,
-        step_samples / SAMPLE_RATE
+        delay_samples / (SAMPLE_RATE as u32),
+        step_samples / (SAMPLE_RATE as u32)
     );
 
     loop {
@@ -55,7 +54,7 @@ async fn encoder_reader(mut encoder: RotaryEncoder, button: ExtiInput<'static>) 
             DELAY_SAMPLES.store(delay_samples, Ordering::Relaxed);
 
             // Log in seconds with 2 decimal places
-            let delay_sec = delay_samples as f32 / SAMPLE_RATE as f32;
+            let delay_sec = delay_samples as f32 / (SAMPLE_RATE as f32);
             let whole = delay_sec as u32;
             let frac = ((delay_sec - whole as f32) * 100.0) as u32;
             defmt::info!("Delay: {}.{:02}s", whole, frac);
@@ -63,10 +62,12 @@ async fn encoder_reader(mut encoder: RotaryEncoder, button: ExtiInput<'static>) 
 
         // Check for button press (non-blocking)
         if button.is_low() {
-            // Toggle step size between 0.1s (4800) and 0.01s (480)
-            step_samples = if step_samples == 4800 { 480 } else { 4800 };
+            // Toggle step size between 0.1s and 0.01s
+            let step_01s = (SAMPLE_RATE as u32) / 10;   // 0.1s
+            let step_001s = (SAMPLE_RATE as u32) / 100; // 0.01s
+            step_samples = if step_samples == step_01s { step_001s } else { step_01s };
 
-            let step_sec = step_samples as f32 / SAMPLE_RATE as f32;
+            let step_sec = step_samples as f32 / (SAMPLE_RATE as f32);
             defmt::info!("Step size: {}s", step_sec);
 
             // Wait for button release to avoid repeated toggles
@@ -183,6 +184,7 @@ async fn main(spawner: Spawner) {
 
     defmt::info!("Starting audio delay callback...");
     defmt::info!("Initial delay: {} seconds", delay_buffer.delay_seconds());
+    defmt::info!("Max delay: {} seconds", MAX_DELAY_SECONDS);
     defmt::info!("Turn encoder to adjust delay (0.1s steps)");
     defmt::info!("Press encoder button to toggle between 0.1s and 0.01s steps");
 
