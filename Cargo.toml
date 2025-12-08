@@ -6,20 +6,30 @@ authors = ["graphex"]
 description = "Audio delay system for syncing Dave Logan Broncos commentary with TV broadcast"
 
 [dependencies]
-cortex-m = "0.7.7"
-cortex-m-rt = "0.7.3"
-panic-halt = "0.2.0"
-embedded-hal = "1.0.0"
+# Daisy Embassy - Modern async framework for Daisy boards
+daisy-embassy = "0.2.2"
 
-# STM32H7 HAL - using version compatible with STM32H750
-stm32h7xx-hal = { version = "0.16.0", features = ["stm32h750v", "rt"] }
+# Embassy async runtime and HAL
+embassy-stm32 = { version = "0.2.0", features = ["defmt", "stm32h750ib", "time-driver-tim5", "exti", "memory-x", "unstable-pac", "chrono"] }
+embassy-time = { version = "0.4.0", features = ["defmt", "defmt-timestamp-uptime", "tick-hz-32_768"] }
+embassy-sync = { version = "0.6.2", features = ["defmt"] }
+embassy-executor = { version = "0.7.0", features = ["task-arena-size-32768", "arch-cortex-m", "executor-thread", "executor-interrupt", "defmt"] }
+embassy-futures = "0.1.1"
 
-# Daisy BSP - provides board-level support for Daisy Pod
-daisy = { git = "https://github.com/antoinevg/daisy_bsp", features = ["seed_1_1"] }
+# Core embedded dependencies
+cortex-m = { version = "0.7.7", features = ["inline-asm", "critical-section-single-core"] }
+cortex-m-rt = { version = "0.7.0", features = ["device"] }
+static_cell = "2.1.1"
+critical-section = "1.2.0"
+
+# Debug and logging
+defmt = "0.3.8"
+defmt-rtt = "0.4.1"
+panic-probe = { version = "0.3.2", features = ["print-defmt"] }
 
 # Utilities
-heapless = "0.8.0"
-micromath = "2.1.0"
+heapless = { version = "0.8", default-features = false }
+micromath = "2.0.0"
 
 [dev-dependencies]
 

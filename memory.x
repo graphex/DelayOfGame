@@ -1,51 +1,53 @@
-/* Memory layout for STM32H750IBK6 on Daisy Pod */
+/* Memory layout for STM32H750IBK6 on Daisy Pod/Seed */
+/* Based on daisy-embassy memory configuration */
 
 MEMORY
 {
-  /* Internal Flash - 128KB */
-  /* Note: Daisy typically boots from QSPI flash, but we define this for completeness */
+  /* Internal Flash - 128KB (often unused, boots from QSPI) */
   FLASH (rx)      : ORIGIN = 0x08000000, LENGTH = 128K
 
+  /* ITCM RAM - 64KB (Instruction Tightly Coupled Memory) */
+  ITCMRAM (rwx)   : ORIGIN = 0x00000000, LENGTH = 64K
+
   /* DTCM RAM - 128KB (Data Tightly Coupled Memory) */
-  /* Fastest memory, great for stack and critical data */
+  /* Fastest memory for stack and time-critical data */
   DTCMRAM (rwx)   : ORIGIN = 0x20000000, LENGTH = 128K
 
-  /* AXI SRAM - 512KB (total, split into regions) */
-  /* Main SRAM for program data */
-  RAM (rwx)       : ORIGIN = 0x24000000, LENGTH = 512K
+  /* AXI SRAM - 512KB */
+  /* Main program memory */
+  SRAM (rwx)      : ORIGIN = 0x24000000, LENGTH = 512K
 
-  /* SRAM1 - 128KB */
-  SRAM1 (rwx)     : ORIGIN = 0x30000000, LENGTH = 128K
+  /* AHB SRAM (D2 domain) - 288KB total */
+  /* SRAM1: 128KB, SRAM2: 128KB, SRAM3: 32KB */
+  RAM_D2 (rwx)    : ORIGIN = 0x30000000, LENGTH = 288K
 
-  /* SRAM2 - 128KB */
-  SRAM2 (rwx)     : ORIGIN = 0x30020000, LENGTH = 128K
+  /* AHB SRAM (D3 domain) - 64KB */
+  /* SRAM4: Used for DMA buffers in D3 domain */
+  RAM_D3 (rwx)    : ORIGIN = 0x38000000, LENGTH = 64K
 
-  /* SRAM3 - 32KB */
-  SRAM3 (rwx)     : ORIGIN = 0x30040000, LENGTH = 32K
+  /* External SDRAM - 64MB (IS42S16160) */
+  /* For large audio delay buffers */
+  SDRAM (rwx)     : ORIGIN = 0xc0000000, LENGTH = 64M
 
-  /* SRAM4 - 64KB */
-  SRAM4 (rwx)     : ORIGIN = 0x38000000, LENGTH = 64K
-
-  /* External SDRAM - 64MB (IS42S16160-based) */
-  /* This is where we'll put our audio delay buffer */
-  SDRAM (rwx)     : ORIGIN = 0xC0000000, LENGTH = 64M
-
-  /* External QSPI Flash - 64MB (W25Q512JV) */
-  /* Typically used for Execute-In-Place (XIP) */
-  QSPI (rx)       : ORIGIN = 0x90000000, LENGTH = 64M
+  /* External QSPI Flash - 8MB (W25Q64JV on some models) */
+  /* Used for Execute-In-Place or data storage */
+  QSPIFLASH (rx)  : ORIGIN = 0x90000000, LENGTH = 8M
 }
 
-/* Default memory region for .text and .rodata */
-REGION_ALIAS("REGION_TEXT", RAM);
-REGION_ALIAS("REGION_RODATA", RAM);
+/* Define custom sections for different memory regions */
+SECTIONS
+{
+  /* SRAM1 BSS section for DMA and peripheral buffers */
+  .sram1_bss (NOLOAD) : ALIGN(4)
+  {
+    *(.sram1_bss .sram1_bss.*);
+    . = ALIGN(4);
+  } > RAM_D2
 
-/* Default memory region for .data and .bss */
-REGION_ALIAS("REGION_DATA", RAM);
-REGION_ALIAS("REGION_BSS", RAM);
-
-/* Heap grows upward, stack grows downward */
-REGION_ALIAS("REGION_HEAP", RAM);
-REGION_ALIAS("REGION_STACK", DTCMRAM);
-
-/* Define the start of the stack (top of DTCM RAM) */
-_stack_start = ORIGIN(DTCMRAM) + LENGTH(DTCMRAM);
+  /* SDRAM BSS section for large audio buffers */
+  .sdram_bss (NOLOAD) : ALIGN(4)
+  {
+    *(.sdram_bss .sdram_bss.*);
+    . = ALIGN(4);
+  } > SDRAM
+}

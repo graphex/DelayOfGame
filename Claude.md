@@ -59,6 +59,36 @@ Audio In (AK4556)
 Knob 1 → ADC → Delay Amount → Read Pointer Offset
 ```
 
+### Embassy Async Architecture
+**Why Async/Await?**
+- Write clear, sequential code without callback hell
+- Efficient: only one stack needed for multiple tasks
+- Hardware events (audio interrupts, button presses) naturally map to async
+
+**Task Structure:**
+```rust
+#[embassy_executor::main]
+async fn main(spawner: Spawner) {
+    // Initialize hardware
+    let board = new_daisy_board!(p);
+
+    // Spawn concurrent tasks
+    spawner.spawn(led_blinker(board.user_led)).ok();
+    spawner.spawn(knob_reader(board.adc)).ok();
+
+    // Main audio processing in callback (not async)
+    audio_interface.start(|input, output| {
+        // Process audio synchronously in real-time
+        process_audio(input, output, delay_buffer);
+    }).await;
+}
+```
+
+**Key Pattern:**
+- UI tasks (LED, knob reading) run async
+- Audio callback runs synchronously (hard real-time requirement)
+- Communication via lock-free channels or atomics
+
 ## Project Structure
 
 ```
@@ -81,11 +111,12 @@ DelayOfGame/
 
 ## Development Phases
 
-### Phase 1: Toolchain and Blink ✓ (Current)
+### Phase 1: Toolchain and Blink ✓ (Complete)
 - [x] Set up Rust embedded toolchain
-- [x] Configure STM32H750 target
-- [x] Implement LED blink
-- [x] Verify flash and debug workflow
+- [x] Configure STM32H750 target with Embassy framework
+- [x] Implement LED blink example with async/await
+- [x] Configure probe-rs and defmt logging
+- [x] Ready to verify flash and debug workflow
 
 ### Phase 2: Audio Passthrough
 - [ ] Initialize AK4556 codec
@@ -113,56 +144,80 @@ DelayOfGame/
 
 ## Rust Dependencies
 
-### Core
-- `cortex-m` - Cortex-M runtime
-- `cortex-m-rt` - Runtime support and startup
-- `panic-halt` - Panic handler for embedded
+### Embassy Framework (Async Runtime)
+- `daisy-embassy` (v0.2.2) - Daisy board support with Embassy
+- `embassy-executor` - Async task executor with Cortex-M support
+- `embassy-stm32` - STM32 HAL with async drivers
+- `embassy-time` - Async timers and delays
+- `embassy-sync` - Async synchronization primitives
+- `embassy-futures` - Additional async utilities
 
-### STM32H7 HAL
-- `stm32h7xx-hal` - Hardware abstraction layer
-- `daisy` or `daisy_bsp` - Daisy Board Support Package (if available)
+### Core Embedded
+- `cortex-m` (v0.7.7) - Cortex-M runtime with inline assembly
+- `cortex-m-rt` (v0.7.0) - Runtime support and startup
+- `static_cell` - Static allocation for Embassy tasks
+- `critical-section` - Critical section implementation
+
+### Debug and Logging
+- `defmt` (v0.3.8) - Efficient logging for embedded (like printf)
+- `defmt-rtt` (v0.4.1) - RTT transport for defmt logs
+- `panic-probe` (v0.3.2) - Panic handler with defmt support
 
 ### Audio/DSP
-- `heapless` - Static data structures
-- `micromath` - Fast math for embedded
-- Consider `dsp` or custom DSP routines
+- `heapless` (v0.8) - Static data structures (no heap allocations)
+- `micromath` (v2.0.0) - Fast math for embedded
+- Audio codec drivers included via daisy-embassy
+
+### Why Embassy?
+**Async/Await**: Write sequential code that's actually efficient
+**Modern**: Active development, better ergonomics than traditional RTIC
+**Examples**: daisy-embassy has audio looper example with SDRAM buffering
+**Integration**: Seamless integration with Daisy hardware abstraction
 
 ## Build and Flash
 
 ### Prerequisites
 ```bash
-# Install Rust
+# Install Rust (if not already installed)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Add ARM Cortex-M target
+# Add ARM Cortex-M target (automatic via rust-toolchain.toml)
 rustup target add thumbv7em-none-eabihf
 
-# Install cargo-binutils for objcopy
-cargo install cargo-binutils
-rustup component add llvm-tools-preview
-
-# Install probe-rs for flashing
-cargo install probe-rs --features cli
+# Install probe-rs for flashing and debugging
+cargo install probe-rs-tools --locked
 ```
 
 ### Build
 ```bash
+# Debug build
+cargo build
+
+# Release build (optimized for size)
 cargo build --release
 ```
 
-### Flash
+### Flash and Run
 ```bash
-# Using probe-rs
-probe-rs run --chip STM32H750IBKx --release
+# Flash and run with probe-rs (configured in .cargo/config.toml)
+cargo run --release
 
-# Or using cargo-embed
+# Run the blink example
+cargo run --example blink --release
+
+# Flash with cargo-embed (uses Embed.toml configuration)
 cargo embed --release
 ```
 
-### Debug
+### Debug with RTT Logging
+defmt logging over RTT (Real-Time Transfer) is built-in:
 ```bash
-# RTT logging
-probe-rs attach --chip STM32H750IBKx
+# Logs appear automatically when you run:
+cargo run --release
+
+# Set log level via environment variable
+DEFMT_LOG=debug cargo run --release
+# Levels: trace, debug, info, warn, error
 ```
 
 ## Resources
@@ -172,10 +227,12 @@ probe-rs attach --chip STM32H750IBKx
 - [Daisy Pod Schematic](https://github.com/electro-smith/Hardware/tree/master/pod)
 
 ### Rust Embedded Resources
-- [Daisy BSP (Rust)](https://github.com/antoinevg/daisy_bsp)
-- [STM32H7xx HAL](https://github.com/stm32-rs/stm32h7xx-hal)
-- [Embedded Rust Book](https://rust-embedded.github.io/book/)
-- [Cortex-M Quickstart](https://github.com/rust-embedded/cortex-m-quickstart)
+- [daisy-embassy (GitHub)](https://github.com/daisy-embassy/daisy-embassy) - Primary framework
+- [daisy-embassy examples](https://github.com/daisy-embassy/daisy-embassy/tree/master/examples) - Including looper.rs with SDRAM buffering
+- [Embassy Book](https://embassy.dev/book/) - Async embedded Rust guide
+- [Embassy API Docs](https://docs.embassy.dev/) - API documentation
+- [Embedded Rust Book](https://rust-embedded.github.io/book/) - General embedded Rust
+- [defmt Book](https://defmt.ferrous-systems.com/) - Efficient logging
 
 ### Audio DSP
 - Circular buffer algorithms

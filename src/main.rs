@@ -1,54 +1,50 @@
 #![no_std]
 #![no_main]
 
-use panic_halt as _;
+use daisy_embassy::new_daisy_board;
+use defmt_rtt as _;
+use embassy_executor::Spawner;
+use embassy_time::Timer;
+use panic_probe as _;
 
-use cortex_m_rt::entry;
-use stm32h7xx_hal::{pac, prelude::*};
+#[embassy_executor::main]
+async fn main(_spawner: Spawner) {
+    // Initialize with default configuration for Daisy board
+    let config = daisy_embassy::default_rcc();
+    let p = embassy_stm32::init(config);
 
-#[entry]
-fn main() -> ! {
-    // Get access to device peripherals
-    let dp = pac::Peripherals::take().unwrap();
-    let cp = cortex_m::Peripherals::take().unwrap();
+    // Create Daisy board instance (handles all peripheral initialization)
+    let board = new_daisy_board!(p);
 
-    // Constrain and freeze power configuration
-    let pwr = dp.PWR.constrain();
-    let pwrcfg = pwr.freeze();
+    defmt::info!("=================================");
+    defmt::info!("  Delay of Game - Audio Delay   ");
+    defmt::info!("  Broncos Radio Sync System     ");
+    defmt::info!("=================================");
 
-    // Constrain and freeze clock configuration
-    // Configure for 400 MHz (max speed for STM32H750)
-    let rcc = dp.RCC.constrain();
-    let ccdr = rcc
-        .sys_ck(400.MHz())
-        .freeze(pwrcfg, &dp.SYSCFG);
-
-    // Get delay provider
-    let mut delay = cp.SYST.delay(ccdr.clocks);
-
-    // Configure the user LED pin (PC7 on Daisy Seed/Pod)
-    let gpioc = dp.GPIOC.split(ccdr.peripheral.GPIOC);
-    let mut user_led = gpioc.pc7.into_push_pull_output();
-
-    // Blink to indicate we're alive and starting
+    // Startup LED sequence - quick blinks to show we're alive
+    let mut led = board.user_led;
+    defmt::info!("Starting up...");
     for _ in 0..6 {
-        user_led.set_high();
-        delay.delay_ms(100_u32);
-        user_led.set_low();
-        delay.delay_ms(100_u32);
+        led.set_high();
+        Timer::after_millis(100).await;
+        led.set_low();
+        Timer::after_millis(100).await;
     }
 
-    // TODO: Initialize audio codec (AK4556)
-    // TODO: Initialize SDRAM for delay buffer
-    // TODO: Initialize ADC for knob input
-    // TODO: Start audio processing loop
+    // TODO Phase 2: Initialize audio codec
+    // TODO Phase 2: Configure SAI for audio I/O
+    // TODO Phase 3: Initialize SDRAM for delay buffer
+    // TODO Phase 4: Initialize ADC for Knob 1 (delay control)
+    // TODO Phase 4: Set up delay adjustment logic
 
-    // Keep LED on to show we're in "ready" state
-    user_led.set_high();
+    defmt::info!("Initialization complete");
 
-    // Main loop - eventually this will be audio processing
+    // Keep LED on to indicate "ready" state
+    led.set_high();
+
+    // Main loop - placeholder until audio processing is implemented
     loop {
-        // Audio processing will happen in interrupts/DMA callbacks
-        cortex_m::asm::wfi(); // Wait for interrupt
+        Timer::after_millis(1000).await;
+        defmt::debug!("Heartbeat - waiting for audio implementation");
     }
 }

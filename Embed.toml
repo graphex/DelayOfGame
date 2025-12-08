@@ -1,11 +1,11 @@
 [default.probe]
-# Use the first found probe
 protocol = "Swd"
 speed = 4000
 
 [default.flashing]
 enabled = true
 halt_afterwards = false
+restore_unwritten_bytes = false
 
 [default.reset]
 enabled = true
@@ -15,10 +15,13 @@ halt_afterwards = false
 chip = "STM32H750IBKx"
 
 [default.rtt]
+# RTT is used by defmt for logging
 enabled = true
 up_mode = "BlockIfFull"
+
+# Channel 0 is used by defmt
 channels = [
-    { up = 0, down = 0, name = "Terminal", format = "String" },
+    { up = 0, down = 0, name = "defmt", format = "Defmt" },
 ]
 
 [default.gdb]
