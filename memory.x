@@ -34,6 +34,10 @@ MEMORY
   QSPIFLASH (rx)  : ORIGIN = 0x90000000, LENGTH = 8M
 }
 
+/* Region alias required by cortex-m-rt */
+/* Maps generic RAM to DTCMRAM (fast tightly-coupled memory) */
+REGION_ALIAS("RAM", DTCMRAM);
+
 /* Define custom sections for different memory regions */
 SECTIONS
 {

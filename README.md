@@ -20,11 +20,14 @@ cargo install probe-rs-tools --locked
 ### Build and Flash
 
 ```bash
-# Build the project
+# Build the project (uses seed_1_1/WM8731 by default)
 cargo build --release
 
 # Flash to Daisy Pod
 cargo run --release
+
+# For seed_1_2/PCM3060 codec:
+cargo run --release --no-default-features --features seed_1_2
 
 # Or run the blink example
 cargo run --example blink --release
@@ -33,8 +36,8 @@ cargo run --example blink --release
 ## Project Status
 
 - [x] Phase 1: Toolchain and basic blink
-- [ ] Phase 2: Audio passthrough
-- [ ] Phase 3: Basic delay buffer
+- [x] Phase 2: Audio passthrough (codec-agnostic implementation)
+- [x] Phase 3: Basic delay buffer (fixed 1-second delay)
 - [ ] Phase 4: Variable delay control
 - [ ] Phase 5: Polish and display
 
@@ -43,7 +46,8 @@ cargo run --example blink --release
 **Electrosmith Daisy Pod**
 - STM32H750 @ 400MHz
 - 64MB SDRAM for audio buffer
-- AK4556 audio codec (24-bit, 48kHz)
+- WM8731 codec (Seed 1.1) or PCM3060 codec (Seed 1.2)
+- 24-bit stereo, 48kHz sample rate
 - Stereo line in/out via 1/8" jacks
 - Control via knobs and buttons
 

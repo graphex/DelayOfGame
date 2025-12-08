@@ -22,11 +22,11 @@ async fn main(_spawner: Spawner) {
     // Blink the LED forever
     let mut led = board.user_led;
     loop {
-        led.set_high();
+        led.on();
         defmt::trace!("LED ON");
         Timer::after_millis(300).await;
 
-        led.set_low();
+        led.off();
         defmt::trace!("LED OFF");
         Timer::after_millis(300).await;
     }

@@ -7,7 +7,9 @@ description = "Audio delay system for syncing Dave Logan Broncos commentary with
 
 [dependencies]
 # Daisy Embassy - Modern async framework for Daisy boards
-daisy-embassy = "0.2.2"
+# Features: seed_1_1 (WM8731), seed_1_2 (PCM3060)
+# NOTE: Only ONE codec feature should be active at a time
+daisy-embassy = { version = "0.2.2", default-features = false }
 
 # Embassy async runtime and HAL
 embassy-stm32 = { version = "0.2.0", features = ["defmt", "stm32h750ib", "time-driver-tim5", "exti", "memory-x", "unstable-pac", "chrono"] }
@@ -51,3 +53,15 @@ path = "src/main.rs"
 [[example]]
 name = "blink"
 path = "examples/blink.rs"
+
+[features]
+# Only one codec feature should be enabled at a time
+default = ["seed_1_1"]
+
+# Codec options (mutually exclusive):
+seed_1_1 = ["daisy-embassy/seed_1_1"]  # WM8731 codec (current board)
+seed_1_2 = ["daisy-embassy/seed_1_2"]  # PCM3060 codec (future board)
+
+# To switch codecs, use:
+#   cargo build --release                              # Uses default (seed_1_1)
+#   cargo build --release --no-default-features --features seed_1_2  # For PCM3060
