@@ -1,0 +1,19 @@
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+# Use probe-rs for running/debugging
+runner = "probe-rs run --chip STM32H750IBKx"
+
+rustflags = [
+  # Link with memory.x linker script
+  "-C", "link-arg=-Tlink.x",
+  "-C", "link-arg=-Tdefmt.x",
+
+  # LLD (shipped with the Rust toolchain) is faster
+  "-C", "link-arg=--nmagic",
+]
+
+[build]
+# Target for STM32H7 (Cortex-M7 with FPU)
+target = "thumbv7em-none-eabihf"
+
+[env]
+DEFMT_LOG = "info"

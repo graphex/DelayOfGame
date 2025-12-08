@@ -1,0 +1,43 @@
+[package]
+name = "delay-of-game"
+version = "0.1.0"
+edition = "2021"
+authors = ["graphex"]
+description = "Audio delay system for syncing Dave Logan Broncos commentary with TV broadcast"
+
+[dependencies]
+cortex-m = "0.7.7"
+cortex-m-rt = "0.7.3"
+panic-halt = "0.2.0"
+embedded-hal = "1.0.0"
+
+# STM32H7 HAL - using version compatible with STM32H750
+stm32h7xx-hal = { version = "0.16.0", features = ["stm32h750v", "rt"] }
+
+# Daisy BSP - provides board-level support for Daisy Pod
+daisy = { git = "https://github.com/antoinevg/daisy_bsp", features = ["seed_1_1"] }
+
+# Utilities
+heapless = "0.8.0"
+micromath = "2.1.0"
+
+[dev-dependencies]
+
+[profile.dev]
+opt-level = 1
+debug = true
+lto = false
+
+[profile.release]
+opt-level = "s"     # Optimize for size
+debug = true        # Keep debug info for probe-rs
+lto = true          # Link-time optimization
+codegen-units = 1   # Better optimization
+
+[[bin]]
+name = "delay-of-game"
+path = "src/main.rs"
+
+[[example]]
+name = "blink"
+path = "examples/blink.rs"
