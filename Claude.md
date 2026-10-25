@@ -13,7 +13,7 @@ Secondary goals: learn embedded Rust, microcontrollers, audio DSP and product de
 - **Memory:** 128 KB internal flash (the firmware runs from here, about 41 KB), 512 KB AXI SRAM, 128 KB DTCM (stack/`.bss`), 64 MB external SDRAM (delay buffer), 8 MB QSPI (unused)
 - **Codec:** WM8731, 48 kHz, 24-bit stereo, line in/out on 1/8" jacks. The `seed_1_2` feature selects the PCM3060 for a Seed 1.2.
 - **Controls used:** the Pod encoder (A = D26/PD11, B = D25/PA0, push button = D13/PB6) and Knob 1 (D21/PC4, ADC1) for output volume. Knob 2 (D15/PC0), the buttons and the gate inputs are free.
-- **Debug:** ST-Link V3 Mini on the 14-pin header, with separate USB power to the Pod. See `HARDWARE_SETUP.md`.
+- **Debug:** ST-Link V3 Mini (firmware V3J18 or newer) on the debug header, with separate USB power to the Pod. See `HARDWARE_SETUP.md`. The firmware enables debug-in-sleep in `DBGMCU`, so the probe can attach while the executor sleeps.
 
 ## Code layout
 
@@ -41,6 +41,8 @@ The linker script comes from `daisy-embassy` (it defines `.sram1_bss` for the DM
 
 - **Frames vs samples.** The buffer counts interleaved samples (2 per frame). Mixing the two units up once made the real delay half of what the logs showed, fixed on 2026-10-24.
 - **Anything that blocks the executor kills the audio.** Every task shares the executor with the audio callback, so a task that blocks for more than about 0.67 ms causes an SAI overrun. Blocking I2C display drivers (SSD1306 OLED, HT16K33 LED backpack) failed for exactly this reason. Moving the audio to an `InterruptExecutor` at higher priority (the `executor-interrupt` feature is already enabled), or using async DMA drivers, would probably fix this, but neither has been tried.
+- **Attaching a debugger glitches the audio.** probe-rs briefly halts the core on attach, which overruns the SAI. The callback loop logs a warning and restarts instead of panicking, so you hear a blip, not permanent silence.
+- **ST-Link firmware must be current.** On firmware V3J7 (2020), probe-rs failed with USB "pipe stalled" / "interfaces are claimed" errors and OpenOCD couldn't read memory. V3J18 works. Update with ST's STSW-LINK007.
 - **Changing the delay causes a click.** `set_delay_samples` jumps the read pointer with no crossfade.
 - **Samples are 24-bit in the low bits of a `u32`.** Sign-extend (`(s << 8) as i32 >> 8`) before doing math on them, and mask to `0x00FF_FFFF` afterward. Silence is 0.
 - **No host tests.** The crate is `no_std` for `thumbv7em-none-eabihf`, so `cargo test` doesn't work. `cargo clippy --release --bins --examples` does.
@@ -50,6 +52,7 @@ The linker script comes from `daisy-embassy` (it defines `.sram1_bss` for the DM
 ```bash
 cargo build --release
 cargo run --release                         # flash with probe-rs and stream defmt logs
+scripts/logs.sh                             # attach to the running Daisy and stream logs (no reflash)
 cargo run --example blink --release
 cargo run --release --no-default-features --features seed_1_2   # PCM3060 boards
 ```

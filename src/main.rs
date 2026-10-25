@@ -134,6 +134,16 @@ async fn main(spawner: Spawner) {
     config.rcc.mux.adcsel = embassy_stm32::pac::rcc::vals::Adcsel::PLL3_R;
     let p = embassy_stm32::init(config);
 
+    // Keep the debug port alive while the executor sleeps between audio blocks,
+    // so an ST-Link can attach (flash, RTT logs) without connect-under-reset
+    embassy_stm32::pac::DBGMCU.cr().modify(|w| {
+        w.set_dbgsleep_d1(true);
+        w.set_dbgstop_d1(true);
+        w.set_dbgstby_d1(true);
+        w.set_d1dbgcken(true);
+        w.set_d3dbgcken(true);
+    });
+
     // Cortex-M peripherals are needed to configure the MPU/cache for SDRAM
     let mut c = cortex_m::Peripherals::take().unwrap();
 
@@ -195,20 +205,21 @@ async fn main(spawner: Spawner) {
     // executor must yield quickly or the SAI will overrun.
     let mut last_delay = INITIAL_DELAY_FRAMES;
     let mut gain = GainRamp::new(0);
-    let result = interface
-        .start_callback(move |input, output| {
-            let current_delay = DELAY_FRAMES.load(Ordering::Relaxed);
-            if current_delay != last_delay {
-                delay_buffer.set_delay_samples(current_delay as usize * CHANNELS);
-                last_delay = current_delay;
-            }
-            delay_buffer.process(input, output);
-            gain.process(output, VOLUME_GAIN.load(Ordering::Relaxed));
-        })
-        .await;
+    let mut callback = move |input: &[u32], output: &mut [u32]| {
+        let current_delay = DELAY_FRAMES.load(Ordering::Relaxed);
+        if current_delay != last_delay {
+            delay_buffer.set_delay_samples(current_delay as usize * CHANNELS);
+            last_delay = current_delay;
+        }
+        delay_buffer.process(input, output);
+        gain.process(output, VOLUME_GAIN.load(Ordering::Relaxed));
+    };
 
-    // start_callback only returns on error (its Ok type is Infallible)
-    let Err(e) = result;
-    defmt::error!("Audio callback error: {:?}", e);
-    panic!("Audio processing stopped");
+    // start_callback only returns on error (its Ok type is Infallible). An
+    // overrun (e.g. the core was halted by a debugger) resets the DMA ring
+    // buffers, so resume instead of going silent until a power cycle.
+    loop {
+        let Err(e) = interface.start_callback(&mut callback).await;
+        defmt::warn!("Audio callback error: {:?} - restarting", e);
+    }
 }

@@ -12,7 +12,7 @@ This is the **first generation** of the project. It works and is still getting u
 4. **Press the encoder** to switch between 0.1 s (coarse) and 0.01 s (fine) steps.
 5. **Knob 1** sets the output volume, from mute to full. Leave it fully clockwise if the output feeds a receiver that has its own volume control.
 
-There's no display. To read the current delay, connect an ST-Link and watch the log:
+There's no display. To read the current delay, connect an ST-Link and run `scripts/logs.sh`. It attaches without reflashing; expect a brief audio blip when it connects.
 
 ```
 INFO Delay: 12.40s

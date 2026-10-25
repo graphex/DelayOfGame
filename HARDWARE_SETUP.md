@@ -45,6 +45,8 @@ For more reliable development and debugging, use an ST-Link V2/V3 programmer.
 
 #### Option 2A: ST-Link V3 Mini with Daisy Pod (VERIFIED WORKING ✓)
 
+**Update the ST-Link firmware first.** On firmware V3J7, probe-rs failed with USB errors ("pipe stalled", "interfaces are claimed"), OpenOCD couldn't read memory, and the probe kept locking up until it was replugged. V3J18 works. Update with ST's free STSW-LINK007 tool (a Java app: `java -jar STLinkUpgrade.jar`, then **Open in update mode** → **Upgrade**). A flaky USB cable to the ST-Link causes similar symptoms, so try another cable too.
+
 **Hardware Required:**
 - ST-Link V3 Mini programmer
 - 14-pin ribbon cable (usually included with ST-Link V3 Mini)
@@ -54,19 +56,10 @@ For more reliable development and debugging, use an ST-Link V2/V3 programmer.
 **Connection Steps:**
 
 1. **Connect the Ribbon Cable:**
-   - Locate the 14-pin debug header on your Daisy Pod/Seed
-   - Plug the 14-pin ribbon cable into the ST-Link V3 Mini
-   - **CRITICAL: Plug the ribbon cable into the Daisy with the cable going UPWARDS**
-   - The ribbon cable has a notch/key - make sure it's oriented correctly
-   - Cable orientation matters! If it doesn't work, try flipping it 180°
-
-   ```
-   [ST-Link V3 Mini]
-         |
-         | 14-pin ribbon cable
-         ↓
-   [Daisy Debug Header] ← Cable goes UP from here
-   ```
+   - The Daisy Seed's debug header has **10 pins**; the ST-Link's ribbon plug has **14**. Center the plug so one unused position hangs off each end. The outer positions of the 14-pin plug aren't connected.
+   - The ST-Link end is shrouded and only fits one way.
+   - At the Daisy end, the plug fits either way round and only one works. <!-- TODO: describe the verified orientation -->
+   - **Check it:** `openocd -f interface/stlink.cfg -f target/stm32h7x.cfg -c "init; shutdown"` should report `Target voltage: 3.3` and `Cortex-M7 ... processor detected`. A reading around 4.7 V or 1.7 V means the plug is reversed or off-center. Unplug both USB cables before re-seating it.
 
 2. **Power Requirements (IMPORTANT!):**
    - **You MUST provide separate power to the Daisy Pod**
