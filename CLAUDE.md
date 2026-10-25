@@ -13,7 +13,7 @@ Secondary goals: learn embedded Rust, microcontrollers, audio DSP and product de
 - **Memory:** 128 KB internal flash (the firmware runs from here, about 41 KB), 512 KB AXI SRAM, 128 KB DTCM (stack/`.bss`), 64 MB external SDRAM (delay buffer), 8 MB QSPI (unused)
 - **Codec:** WM8731, 48 kHz, 24-bit stereo, line in/out on 1/8" jacks. The `seed_1_2` feature selects the PCM3060 for a Seed 1.2.
 - **Controls used:** the Pod encoder (A = D26/PD11, B = D25/PA0, push button = D13/PB6) and Knob 1 (D21/PC4, ADC1) for output volume. Knob 2 (D15/PC0), the buttons and the gate inputs are free.
-- **Debug:** ST-Link V3 Mini (firmware V3J18 or newer) on the debug header, with separate USB power to the Pod. See `HARDWARE_SETUP.md`. The firmware enables debug-in-sleep in `DBGMCU`, so the probe can attach while the executor sleeps.
+- **Debug:** ST-Link V3 Mini (firmware V3J18 or newer) on the debug header. The Daisy's own USB must also go to the computer (power + common ground). See the orientation diagram in `HARDWARE_SETUP.md`. The firmware enables debug-in-sleep in `DBGMCU`, so the probe can attach while the executor sleeps.
 
 ## Code layout
 

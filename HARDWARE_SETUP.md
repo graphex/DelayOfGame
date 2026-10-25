@@ -51,23 +51,39 @@ For more reliable development and debugging, use an ST-Link V2/V3 programmer.
 - ST-Link V3 Mini programmer
 - 14-pin ribbon cable (usually included with ST-Link V3 Mini)
 - Daisy Pod with debug header populated
-- **Separate USB cable for Daisy power**
+- **A second USB cable from the Daisy to the computer**
 
 **Connection Steps:**
 
 1. **Connect the Ribbon Cable:**
    - The Daisy Seed's debug header has **10 pins**; the ST-Link's ribbon plug has **14**. Center the plug so one unused position hangs off each end. The outer positions of the 14-pin plug aren't connected.
    - The ST-Link end is shrouded and only fits one way.
-   - At the Daisy end, the plug fits either way round and only one works. <!-- TODO: describe the verified orientation -->
+   - At the Daisy end, the plug fits either way round and only one works. Hold the Seed so its USB port is on your **left**. The ribbon should then leave the plug pointing **up**, away from you:
+
+```
+                  to ST-Link V3 Mini
+                             ▲
+                       │ │ │ │ │ │ │
+ ┌─────────────────────┼─┼─┼─┼─┼─┼─┼──────────────────────┐
+ │                     │ │ │ │ │ │ │                      │
+ │                  ┌──┴─┴─┴─┴─┴─┴─┴──┐                   │
+ │                  │  ○ ● ● ● ● ● ○  │                   │
+ │                  │  ○ ● ● ● ● ● ○  │                   │
+┌┴─────┐            └─────────────────┘                   │
+│ USB  │                                                  │
+└┬─────┘                                                  │
+ │                                Daisy Seed (top view)   │
+ └────────────────────────────────────────────────────────┘
+
+ ● = position on a header pin    ○ = empty position hanging off the end
+```
+
    - **Check it:** `openocd -f interface/stlink.cfg -f target/stm32h7x.cfg -c "init; shutdown"` should report `Target voltage: 3.3` and `Cortex-M7 ... processor detected`. A reading around 4.7 V or 1.7 V means the plug is reversed or off-center. Unplug both USB cables before re-seating it.
 
-2. **Power Requirements (IMPORTANT!):**
-   - **You MUST provide separate power to the Daisy Pod**
-   - Connect a USB cable to the Daisy Pod's USB port (for power)
-   - Connect the ST-Link V3 Mini to your computer via USB (for programming)
-   - **Both USB connections are required:**
-     - Daisy USB = Power supply
-     - ST-Link USB = Programming/debugging interface
+2. **Plug both USB cables into the computer (IMPORTANT!):**
+   - ST-Link V3 Mini → computer (programming, RTT logs)
+   - Daisy Seed's USB port → **the same computer**, not a separate charger or power brick
+   - A wall supply alone for the Daisy isn't enough. It needs the computer's USB connection too.
 
 3. **Verify Connection:**
    ```bash
@@ -80,10 +96,7 @@ For more reliable development and debugging, use an ST-Link V2/V3 programmer.
    cargo run --example blink --release
    ```
 
-**Why Separate Power?**
-- The ST-Link V3 Mini typically doesn't provide enough current for the Daisy's full operation
-- The Daisy Pod has audio codec, SDRAM, and other peripherals that need stable power
-- Using separate USB power ensures reliable operation and programming
+**Why two cables?** The ST-Link V3 Mini doesn't power the target, so the Daisy's own USB supplies it. Plugging that cable into the computer also gives both boards a common ground, and you can switch to DFU without moving cables.
 
 #### Option 2B: ST-Link V2 with Individual Wires
 
@@ -163,8 +176,8 @@ The following debug probes were found:
 4. On macOS: Check System Report → USB to see if STM32 device appears
 
 **If using ST-Link V3 Mini:**
-1. **Check ribbon cable orientation** - Cable should go UPWARDS from Daisy
-2. **Verify dual USB power** - BOTH Daisy USB and ST-Link USB must be connected
+1. **Check ribbon cable orientation** against the diagram in Option 2A (Seed USB on the left, ribbon pointing up, plug centered)
+2. **Check both USB cables** - the ST-Link AND the Daisy must be plugged into the computer
 3. Try reseating the 14-pin ribbon cable (both ends)
 4. Verify ST-Link V3 appears in USB devices
 5. Try different USB ports
@@ -210,7 +223,7 @@ sudo udevadm trigger
 **For serious development:**
 - **ST-Link V3 Mini is highly recommended** (compact, works great with Daisy)
 - Use 14-pin ribbon cable to debug header (if populated on your Daisy)
-- Remember: Cable orientation matters (upwards from Daisy) + dual USB power required
+- Remember: ribbon orientation matters (see the diagram in Option 2A), and both the ST-Link and the Daisy must be plugged into the computer
 - This enables RTT logging via `defmt` which is incredibly useful for debugging
 
 ## Alternative: Web Programmer
@@ -242,8 +255,8 @@ cargo run --example blink --release
 
 - [ ] ST-Link V3 Mini connected to computer via USB
 - [ ] 14-pin ribbon cable connected to ST-Link V3 Mini
-- [ ] Ribbon cable connected to Daisy debug header (cable going UPWARDS)
-- [ ] **Separate USB cable connected to Daisy Pod for power**
+- [ ] Ribbon plug centered on the Daisy debug header, ribbon pointing up with the Seed's USB on the left (see diagram)
+- [ ] **Daisy USB cable plugged into the same computer** (not a charger)
 - [ ] Run `probe-rs list` to verify detection
 - [ ] Run `cargo run --example blink --release` to test
 
@@ -252,11 +265,11 @@ cargo run --example blink --release
 ```
 Computer USB Port 1 → ST-Link V3 Mini
                            |
-                    14-pin ribbon cable (upward orientation)
+                    14-pin ribbon cable (centered, pointing up with Seed USB on the left)
                            ↓
                     Daisy Debug Header
 
-Computer USB Port 2 → Daisy USB (for power)
+Computer USB Port 2 → Daisy Seed USB (power + common ground)
 ```
 
-Both USB connections are required for reliable operation!
+Both cables must go to the computer!
