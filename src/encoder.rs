@@ -1,12 +1,10 @@
-//! Rotary encoder with button for Daisy Pod
+//! Quadrature decoder for the Daisy Pod's rotary encoder
 //!
-//! Implements quadrature decoding for the Daisy Pod's rotary encoder.
 //! Hardware connections:
 //! - Encoder A: PD11 (Seed pin D26)
 //! - Encoder B: PA0 (Seed pin D25)
-//! - Button: PB6 (Seed pin D13)
+//! - Push button: PB6 (Seed pin D13), read directly in main.rs
 
-use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::Input;
 
 /// Rotary encoder state machine for quadrature decoding
@@ -15,7 +13,6 @@ pub struct RotaryEncoder {
     pin_b: Input<'static>,
     last_a: bool,
     last_b: bool,
-    position: i32,
 }
 
 impl RotaryEncoder {
@@ -30,7 +27,6 @@ impl RotaryEncoder {
             pin_b,
             last_a,
             last_b,
-            position: 0,
         }
     }
 
@@ -51,12 +47,10 @@ impl RotaryEncoder {
             // If B is low, clockwise rotation
             if !b {
                 increment = 1;
-                self.position += 1;
             }
             // If B is high, counter-clockwise rotation
             else {
                 increment = -1;
-                self.position -= 1;
             }
         }
         // Detect falling edge on B
@@ -64,12 +58,10 @@ impl RotaryEncoder {
             // If A is low, counter-clockwise rotation
             if !a {
                 increment = -1;
-                self.position -= 1;
             }
             // If A is high, clockwise rotation
             else {
                 increment = 1;
-                self.position += 1;
             }
         }
 
@@ -77,35 +69,5 @@ impl RotaryEncoder {
         self.last_b = b;
 
         increment
-    }
-
-    /// Get current encoder position (total rotation count)
-    pub fn position(&self) -> i32 {
-        self.position
-    }
-
-    /// Reset position to zero
-    pub fn reset(&mut self) {
-        self.position = 0;
-    }
-}
-
-/// Complete encoder with button
-pub struct Encoder {
-    pub encoder: RotaryEncoder,
-    pub button: ExtiInput<'static>,
-}
-
-impl Encoder {
-    /// Create new encoder with button
-    pub fn new(
-        pin_a: Input<'static>,
-        pin_b: Input<'static>,
-        button: ExtiInput<'static>,
-    ) -> Self {
-        Self {
-            encoder: RotaryEncoder::new(pin_a, pin_b),
-            button,
-        }
     }
 }

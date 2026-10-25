@@ -1,56 +1,48 @@
-/// Circular buffer for audio delay
-///
-/// This module implements a circular buffer for delaying audio samples.
-/// The buffer is stored in external SDRAM (64MB) allowing for long delays.
+//! Circular buffer for audio delay
+//!
+//! Stores interleaved stereo samples (L, R, L, R, ...) in external SDRAM.
+//! "Samples" here means individual u32 words, so one second of audio is
+//! SAMPLE_RATE * CHANNELS samples.
 
 use daisy_embassy::audio::HALF_DMA_BUFFER_LENGTH;
+use daisy_embassy::sdram::SDRAM_SIZE;
 
-/// Maximum delay time in seconds
-/// This is the single source of truth for max delay - adjust here if needed
-/// Hardware supports up to ~175 seconds (full 64MB SDRAM)
+/// Maximum delay time in seconds - the single source of truth for max delay.
+/// 64MB SDRAM holds ~174 seconds of 32-bit stereo at 48kHz.
 pub const MAX_DELAY_SECONDS: usize = 60;
 
-/// Sample rate (48kHz)
 pub const SAMPLE_RATE: usize = 48_000;
 
-/// Number of channels (stereo)
 pub const CHANNELS: usize = 2;
 
-/// Total buffer length in samples (u32 words)
-/// Calculated: 48kHz × 60 seconds × 2 channels = 5,760,000 samples = 23.04 MB
+/// Total buffer length in samples: 48kHz × 60s × 2 channels = 5,760,000 (23 MB)
 pub const BUFFER_LENGTH: usize = SAMPLE_RATE * MAX_DELAY_SECONDS * CHANNELS;
 
-/// Size of each audio processing block (from Embassy)
+/// Samples per audio callback (32 frames × 2 channels, interleaved)
 pub const BLOCK_LENGTH: usize = HALF_DMA_BUFFER_LENGTH;
 
-/// Circular delay buffer
+const _: () = assert!(
+    BUFFER_LENGTH * core::mem::size_of::<u32>() <= SDRAM_SIZE,
+    "MAX_DELAY_SECONDS does not fit in SDRAM"
+);
+
 pub struct DelayBuffer<'a> {
-    /// Reference to SDRAM buffer
     buffer: &'a mut [u32],
-
-    /// Write pointer (where new audio is written)
     write_pos: usize,
-
-    /// Read pointer (where delayed audio is read from)
     read_pos: usize,
-
-    /// Current delay in samples
     delay_samples: usize,
 }
 
 impl<'a> DelayBuffer<'a> {
-    /// Create a new delay buffer from an SDRAM slice
+    /// Create a new delay buffer from an SDRAM slice, filled with silence
     ///
-    /// # Safety
-    /// The buffer slice must be valid for the lifetime 'a and at least BUFFER_LENGTH in size
+    /// # Panics
+    /// If the slice is shorter than BUFFER_LENGTH
     pub fn new(buffer: &'a mut [u32]) -> Self {
         assert!(buffer.len() >= BUFFER_LENGTH, "Buffer too small for delay");
 
-        // Clear buffer to silence
-        const SILENCE: u32 = u32::MAX / 2; // Mid-point for signed audio
-        for sample in buffer[..BUFFER_LENGTH].iter_mut() {
-            *sample = SILENCE;
-        }
+        // Samples are signed (two's complement), so silence is zero
+        buffer[..BUFFER_LENGTH].fill(0);
 
         Self {
             buffer,
@@ -60,16 +52,14 @@ impl<'a> DelayBuffer<'a> {
         }
     }
 
-    /// Set delay time in samples
+    /// Set delay in samples (interleaved, so 2 per frame)
     ///
-    /// This is called from outside the audio callback to adjust delay.
-    /// The delay will be clamped to valid range [0, BUFFER_LENGTH-BLOCK_LENGTH]
+    /// Clamped to leave room for one block. The read pointer jumps immediately,
+    /// which can produce an audible click when the delay changes.
     pub fn set_delay_samples(&mut self, samples: usize) {
-        // Clamp to valid range (leave space for at least one block)
         let max_delay = BUFFER_LENGTH.saturating_sub(BLOCK_LENGTH);
         self.delay_samples = samples.min(max_delay);
 
-        // Update read pointer to maintain delay offset from write pointer
         self.read_pos = if self.write_pos >= self.delay_samples {
             self.write_pos - self.delay_samples
         } else {
@@ -77,37 +67,15 @@ impl<'a> DelayBuffer<'a> {
         };
     }
 
-    /// Set delay time in seconds (convenience method)
-    pub fn set_delay_seconds(&mut self, seconds: f32) {
-        let samples = (seconds * SAMPLE_RATE as f32 * CHANNELS as f32) as usize;
-        self.set_delay_samples(samples);
-    }
-
-    /// Get current delay in samples
-    pub fn delay_samples(&self) -> usize {
-        self.delay_samples
-    }
-
-    /// Get current delay in seconds
-    pub fn delay_seconds(&self) -> f32 {
-        self.delay_samples as f32 / (SAMPLE_RATE * CHANNELS) as f32
-    }
-
-    /// Process one block of audio (called from audio callback)
-    ///
-    /// Writes input to buffer and reads delayed output.
-    /// This is the core delay processing function.
+    /// Process one block of audio (called from audio callback):
+    /// write input to the buffer and read delayed output
     pub fn process(&mut self, input: &[u32], output: &mut [u32]) {
         assert_eq!(input.len(), BLOCK_LENGTH, "Input block wrong size");
         assert_eq!(output.len(), BLOCK_LENGTH, "Output block wrong size");
 
-        // Write input samples to buffer at write_pos
         self.write_block(input);
-
-        // Read delayed samples from buffer at read_pos
         self.read_block(output);
 
-        // Advance pointers
         self.write_pos = (self.write_pos + BLOCK_LENGTH) % BUFFER_LENGTH;
         self.read_pos = (self.read_pos + BLOCK_LENGTH) % BUFFER_LENGTH;
     }
@@ -117,11 +85,7 @@ impl<'a> DelayBuffer<'a> {
         let remain = BLOCK_LENGTH.min(BUFFER_LENGTH - self.write_pos);
         let frac = BLOCK_LENGTH - remain;
 
-        // Copy first part (up to end of buffer)
-        self.buffer[self.write_pos..(self.write_pos + remain)]
-            .copy_from_slice(&input[..remain]);
-
-        // Copy wrap-around part (if needed)
+        self.buffer[self.write_pos..(self.write_pos + remain)].copy_from_slice(&input[..remain]);
         if frac > 0 {
             self.buffer[0..frac].copy_from_slice(&input[remain..]);
         }
@@ -132,20 +96,9 @@ impl<'a> DelayBuffer<'a> {
         let remain = BLOCK_LENGTH.min(BUFFER_LENGTH - self.read_pos);
         let frac = BLOCK_LENGTH - remain;
 
-        // Copy first part (up to end of buffer)
-        output[..remain].copy_from_slice(
-            &self.buffer[self.read_pos..(self.read_pos + remain)]
-        );
-
-        // Copy wrap-around part (if needed)
+        output[..remain].copy_from_slice(&self.buffer[self.read_pos..(self.read_pos + remain)]);
         if frac > 0 {
             output[remain..].copy_from_slice(&self.buffer[0..frac]);
         }
     }
 }
-
-// Note: Tests removed because no_std embedded targets don't support the test framework
-// Compile-time assertions verify buffer calculations:
-// - BUFFER_LENGTH = 48000 Hz × 60 sec × 2 channels = 5,760,000 samples
-// - Size = 5,760,000 × 4 bytes = 23.04 MB (fits in 64MB SDRAM)
-// - One second = 48000 × 2 = 96,000 samples
