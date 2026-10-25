@@ -9,13 +9,13 @@ use daisy_embassy::sdram::SDRAM_SIZE;
 
 /// Maximum delay time in seconds - the single source of truth for max delay.
 /// 64MB SDRAM holds ~174 seconds of 32-bit stereo at 48kHz.
-pub const MAX_DELAY_SECONDS: usize = 60;
+pub const MAX_DELAY_SECONDS: usize = 170;
 
 pub const SAMPLE_RATE: usize = 48_000;
 
 pub const CHANNELS: usize = 2;
 
-/// Total buffer length in samples: 48kHz × 60s × 2 channels = 5,760,000 (23 MB)
+/// Total buffer length in samples: 48kHz × 170s × 2 channels = 16,320,000 (65.3 MB of the 67.1 MB SDRAM)
 pub const BUFFER_LENGTH: usize = SAMPLE_RATE * MAX_DELAY_SECONDS * CHANNELS;
 
 /// Samples per audio callback (32 frames × 2 channels, interleaved)

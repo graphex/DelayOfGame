@@ -9,10 +9,11 @@ A Broncos game on TV or streaming runs anywhere from a few seconds to over a min
 ## What Gen 1 is
 
 - **Hardware:** Electrosmith Daisy Pod with a Daisy Seed 1.1. STM32H750 Cortex-M7 at 480 MHz, 64 MB SDRAM, WM8731 codec, 48 kHz / 24-bit stereo line in and out.
-- **Software:** Rust, `no_std`, Embassy async (`daisy-embassy` 0.2.2), about 350 lines.
+- **Software:** Rust, `no_std`, Embassy async (`daisy-embassy` 0.2.2), about 450 lines.
 - **Features:**
-  - Stereo delay from 0 to 60 s
+  - Stereo delay from 0 to 170 s (nearly all of the 64 MB SDRAM at 32-bit samples)
   - Encoder adjusts the delay in 0.1 s steps, or 0.01 s steps after a button press
+  - Knob 1 controls output volume
   - LED heartbeat
   - The delay value can only be read over defmt/RTT logs, which needs an ST-Link and a laptop
 - **Core algorithm:** a circular buffer in SDRAM. Write each 32-frame block at `write_pos` and read from `write_pos − delay`. It costs almost no CPU.
@@ -32,14 +33,13 @@ A Broncos game on TV or streaming runs anywhere from a few seconds to over a min
    - Every task, audio included, ran on one cooperative executor, so a blocked display task starved the audio.
    - This is a software-architecture limit, not a CPU-speed limit. Possible fixes on the same chip: run audio on a high-priority `InterruptExecutor`, use DMA/async I2C or SPI, or update the display in small chunks between blocks.
 2. **No way to see the delay without a laptop.** This is the main usability gap and the main reason for Gen 2.
-3. **Delay was off by 2× until 2026-10-24.** The control code counted frames and the buffer counted interleaved samples, so the real delay was half of what the logs showed and the real maximum was about 30 s. It's fixed in code but not yet re-checked on hardware. Gen 2 should use one unit (frames) everywhere and test it with a known signal.
+3. **Delay was off by 2× until 2026-10-24.** The control code counted frames and the buffer counted interleaved samples, so the real delay was half of what the logs showed and the real maximum was about 30 s instead of the intended 60 s. It's fixed in code but not yet re-checked on hardware. Gen 2 should use one unit (frames) everywhere and test it with a known signal.
 
 ## Known Gen 1 limitations (carry the fixes into Gen 2)
 
 - **Clicks when the delay changes.** The read pointer jumps. Gen 2 should crossfade (about 5–20 ms) or briefly mute.
 - **The delay isn't saved.** It resets to 1 s on every power-up. Gen 2 should save it to flash, ideally with a few presets for different streaming services and channels, which have different lags.
-- **60 s maximum** is a constant (`MAX_DELAY_SECONDS`). The Daisy's 64 MB would allow about 174 s with 32-bit samples or about 349 s with 16-bit samples.
-- **Encoder pulses aren't accelerated,** so long changes take a lot of turning at 0.1 s per step.
+- **170 s maximum.** Storing samples as 16-bit instead of 32-bit would double that to about 349 s on the same hardware.
 - **Controls only on the device.** No remote or app control.
 
 ## Is new hardware actually needed?

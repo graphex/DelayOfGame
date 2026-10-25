@@ -3,6 +3,7 @@
 
 mod buffer;
 mod encoder;
+mod volume;
 
 use buffer::{DelayBuffer, CHANNELS, MAX_DELAY_SECONDS, SAMPLE_RATE};
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -10,11 +11,14 @@ use daisy_embassy::new_daisy_board;
 use daisy_embassy::sdram::SDRAM_SIZE;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
+use embassy_stm32::adc::{Adc, SampleTime};
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::{Input, Pull};
+use embassy_stm32::peripherals::{ADC1, PC4};
 use embassy_time::{Delay, Timer};
 use encoder::RotaryEncoder;
 use panic_probe as _;
+use volume::GainRamp;
 
 /// Frames (one sample per channel) per second
 const FRAMES_PER_SECOND: u32 = SAMPLE_RATE as u32;
@@ -23,10 +27,17 @@ const MAX_DELAY_FRAMES: u32 = FRAMES_PER_SECOND * MAX_DELAY_SECONDS as u32;
 const COARSE_STEP_FRAMES: u32 = FRAMES_PER_SECOND / 10; // 0.1s
 const FINE_STEP_FRAMES: u32 = FRAMES_PER_SECOND / 100; // 0.01s
 
+/// Full-scale ADC reading at the default 16-bit resolution
+const KNOB_FULL_SCALE: u32 = u16::MAX as u32;
+
 /// Delay in frames, shared between the encoder task and the audio callback.
 /// The delay buffer stores interleaved stereo, so the callback converts
 /// frames to buffer samples by multiplying by CHANNELS.
 static DELAY_FRAMES: AtomicU32 = AtomicU32::new(INITIAL_DELAY_FRAMES);
+
+/// Output gain in Q16 (volume::UNITY = 1.0), set by Knob 1. Starts at 0 so
+/// audio fades in to the knob's level at power-up instead of popping.
+static VOLUME_GAIN: AtomicU32 = AtomicU32::new(0);
 
 /// Log a frame count as seconds with two decimal places
 fn log_seconds(label: &str, frames: u32) {
@@ -76,6 +87,33 @@ async fn encoder_reader(mut encoder: RotaryEncoder, button: ExtiInput<'static>) 
     }
 }
 
+/// Reads Knob 1 and publishes the output volume
+#[embassy_executor::task]
+async fn volume_reader(mut adc: Adc<'static, ADC1>, mut knob: PC4) {
+    // Exponential moving average, stored scaled by 8 to keep precision
+    let mut smoothed_x8 = adc.blocking_read(&mut knob) as u32 * 8;
+    let mut last_percent = u32::MAX;
+
+    loop {
+        let raw = adc.blocking_read(&mut knob) as u32;
+        smoothed_x8 = smoothed_x8 - smoothed_x8 / 8 + raw;
+
+        let gain = volume::knob_to_gain(smoothed_x8 / 8, KNOB_FULL_SCALE);
+        VOLUME_GAIN.store(gain, Ordering::Relaxed);
+
+        // Log only meaningful changes so ADC noise doesn't flood the console
+        let percent = gain * 100 / volume::UNITY;
+        if percent.abs_diff(last_percent) >= 2
+            || (percent != last_percent && (percent == 0 || percent == 100))
+        {
+            defmt::info!("Volume: {}%", percent);
+            last_percent = percent;
+        }
+
+        Timer::after_millis(10).await;
+    }
+}
+
 /// Heartbeat LED shows the firmware is running
 #[embassy_executor::task]
 async fn led_blinker(mut led: daisy_embassy::led::UserLed<'static>) {
@@ -91,7 +129,9 @@ async fn led_blinker(mut led: daisy_embassy::led::UserLed<'static>) {
 async fn main(spawner: Spawner) {
     defmt::info!("Delay of Game - Broncos radio sync");
 
-    let config = daisy_embassy::default_rcc();
+    let mut config = daisy_embassy::default_rcc();
+    // Clock the ADC from PLL3_R (~24.6MHz), which default_rcc already enables
+    config.rcc.mux.adcsel = embassy_stm32::pac::rcc::vals::Adcsel::PLL3_R;
     let p = embassy_stm32::init(config);
 
     // Cortex-M peripherals are needed to configure the MPU/cache for SDRAM
@@ -124,6 +164,10 @@ async fn main(spawner: Spawner) {
     let enc_button = ExtiInput::new(board.pins.d13, p.EXTI6, Pull::Up);
     let encoder = RotaryEncoder::new(enc_a, enc_b);
 
+    // Pod Knob 1 = D21 (PC4) sets output volume
+    let mut adc = Adc::new(p.ADC1);
+    adc.set_sample_time(SampleTime::CYCLES64_5);
+
     // Codec (WM8731 or PCM3060) is selected at compile time by feature flag
     let interface = board
         .audio_peripherals
@@ -139,16 +183,18 @@ async fn main(spawner: Spawner) {
     defmt::info!("Audio interface started");
 
     spawner.spawn(encoder_reader(encoder, enc_button)).ok();
+    spawner.spawn(volume_reader(adc, board.pins.d21)).ok();
     spawner.spawn(led_blinker(led)).ok();
 
     defmt::info!(
-        "Max delay {}s. Turn encoder to adjust, press to toggle 0.1s/0.01s steps",
+        "Max delay {}s. Encoder: turn to adjust, press to toggle 0.1s/0.01s steps. Knob 1: volume",
         MAX_DELAY_SECONDS
     );
 
     // Runs once per 32-frame block (~0.67ms at 48kHz). Everything else on this
     // executor must yield quickly or the SAI will overrun.
     let mut last_delay = INITIAL_DELAY_FRAMES;
+    let mut gain = GainRamp::new(0);
     let result = interface
         .start_callback(move |input, output| {
             let current_delay = DELAY_FRAMES.load(Ordering::Relaxed);
@@ -157,6 +203,7 @@ async fn main(spawner: Spawner) {
                 last_delay = current_delay;
             }
             delay_buffer.process(input, output);
+            gain.process(output, VOLUME_GAIN.load(Ordering::Relaxed));
         })
         .await;
 
