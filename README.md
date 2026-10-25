@@ -1,58 +1,51 @@
 # Delay of Game
 
-Audio delay system for syncing Dave Logan's Broncos radio commentary with TV broadcast.
+A stereo audio delay that lines up Dave Logan's Broncos radio call (KOA 850 AM / 94.1 FM / iHeartRadio) with the TV picture. It runs on an Electrosmith Daisy Pod and is written in Rust with Embassy.
 
-## Quick Start
+This is the **first generation** of the project. It works and is feature-frozen. [GEN2_HANDOFF.md](GEN2_HANDOFF.md) has the lessons learned and requirements for the next hardware generation.
 
-### Prerequisites
+## Using it
 
-```bash
-# Install Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+1. Plug the radio source into the Pod's **input** jack and the speakers or receiver into the **output** jack.
+2. Power the Pod over USB. The LED blinks quickly during startup, then pulses once per second.
+3. **Turn the encoder** to change the delay. It starts at 1.00 s and goes from 0 to 60 s.
+4. **Press the encoder** to switch between 0.1 s (coarse) and 0.01 s (fine) steps.
 
-# Add ARM Cortex-M7 target
-rustup target add thumbv7em-none-eabihf
+There's no display. To read the current delay, connect an ST-Link and watch the log:
 
-# Install probe-rs for flashing and debugging
-cargo install probe-rs-tools --locked
+```
+INFO Delay: 12.40s
+INFO Step size: 0.01s
 ```
 
-### Build and Flash
+The delay goes back to 1 s every time the Pod powers up.
+
+## Building and flashing
 
 ```bash
-# Build the project (uses seed_1_1/WM8731 by default)
-cargo build --release
+# One-time setup
+rustup target add thumbv7em-none-eabihf     # also handled by rust-toolchain.toml
+cargo install probe-rs-tools --locked
 
-# Flash to Daisy Pod
+# Build, flash and stream logs over an ST-Link
 cargo run --release
 
-# For seed_1_2/PCM3060 codec:
-cargo run --release --no-default-features --features seed_1_2
-
-# Or run the blink example
+# LED-only smoke test
 cargo run --example blink --release
 ```
 
-## Project Status
+The default build targets Daisy Seed 1.1 (WM8731 codec). For a Seed 1.2 (PCM3060):
 
-- [x] Phase 1: Toolchain and basic blink
-- [x] Phase 2: Audio passthrough (codec-agnostic implementation)
-- [x] Phase 3: Basic delay buffer (fixed 1-second delay)
-- [ ] Phase 4: Variable delay control
-- [ ] Phase 5: Polish and display
+```bash
+cargo run --release --no-default-features --features seed_1_2
+```
+
+See [HARDWARE_SETUP.md](HARDWARE_SETUP.md) for probe wiring (a verified ST-Link V3 Mini setup) and flashing over USB DFU without a probe.
 
 ## Hardware
 
-**Electrosmith Daisy Pod**
-- STM32H750 @ 400MHz
-- 64MB SDRAM for audio buffer
-- WM8731 codec (Seed 1.1) or PCM3060 codec (Seed 1.2)
-- 24-bit stereo, 48kHz sample rate
-- Stereo line in/out via 1/8" jacks
-- Control via knobs and buttons
-
-## Documentation
-
-See [Claude.md](Claude.md) for detailed project documentation, architecture, and development notes.
+- Electrosmith Daisy Pod with a Daisy Seed 1.1: STM32H750 at 480 MHz, 64 MB SDRAM, WM8731 codec
+- 48 kHz, 24-bit stereo, line in and line out on 1/8" jacks
+- Pod rotary encoder with push button (pins D26, D25, D13)
 
 ## Go Broncos! 🏈

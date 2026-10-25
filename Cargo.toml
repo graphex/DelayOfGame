@@ -12,7 +12,7 @@ description = "Audio delay system for syncing Dave Logan Broncos commentary with
 daisy-embassy = { version = "0.2.2", default-features = false }
 
 # Embassy async runtime and HAL
-embassy-stm32 = { version = "0.2.0", features = ["defmt", "stm32h750ib", "time-driver-tim5", "exti", "memory-x", "unstable-pac", "chrono"] }
+embassy-stm32 = { version = "0.2.0", features = ["defmt", "stm32h750ib", "time-driver-tim5", "exti", "unstable-pac", "chrono"] }
 embassy-time = { version = "0.4.0", features = ["defmt", "defmt-timestamp-uptime", "tick-hz-32_768"] }
 embassy-sync = { version = "0.6.2", features = ["defmt"] }
 embassy-executor = { version = "0.7.0", features = ["task-arena-size-32768", "arch-cortex-m", "executor-thread", "executor-interrupt", "defmt"] }

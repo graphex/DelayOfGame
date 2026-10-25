@@ -18,21 +18,20 @@ The Daisy Seed has a built-in USB bootloader for programming.
 2. **Verify DFU Connection:**
    ```bash
    # Check if device is detected
-   probe-rs list
+   dfu-util -l
 
    # Or use system_profiler (macOS)
    system_profiler SPUSBDataType | grep -A 10 "STM"
-
-   # Or dfu-util
-   dfu-util -l
    ```
 
-3. **Flash with probe-rs:**
+3. **Flash with dfu-util** (DFU writes to internal flash; probe-rs does not speak DFU):
    ```bash
-   cargo run --release
+   cargo objcopy --release -- -O binary target/delay-of-game.bin
+   dfu-util -a 0 -s 0x08000000:leave -D target/delay-of-game.bin
    ```
+   `cargo objcopy` comes from `cargo install cargo-binutils`.
 
-**Note:** probe-rs supports DFU mode on STM32 devices, so it should work with the USB connection.
+**Note:** DFU gives you no RTT logs, so you won't see the delay value. Use an ST-Link for that.
 
 ### Option 2: ST-Link Programmer (External Hardware) - MORE RELIABLE ⭐ RECOMMENDED
 
@@ -147,10 +146,7 @@ The following debug probes were found:
 [0]: STLink V3 (VID: 0483, PID: 374e, Serial: ..., STLink)
 ```
 
-**Expected output with DFU:**
-```
-STM32 in DFU mode detected
-```
+**DFU mode** doesn't show up in `probe-rs list`. Check it with `dfu-util -l` instead.
 
 ## Method Comparison
 
@@ -216,7 +212,7 @@ sudo udevadm trigger
 
 **For getting started quickly:**
 1. Try USB/DFU mode first (no extra hardware needed)
-2. If that's unreliable, consider getting an ST-Link V2
+2. For delay readout via RTT logs, use an ST-Link (V3 Mini verified)
 
 **For serious development:**
 - **ST-Link V3 Mini is highly recommended** (compact, works great with Daisy)
