@@ -177,10 +177,15 @@ async fn knob_reader(mut adc: Adc<'static, ADC1>, mut knob1: PC4, mut knob2: PC0
 
 /// Shows the delay on the HT16K33 backpack, redrawing only when it changes.
 /// Pressing the encoder shows FINE or CRSE for a second. Brightness follows
-/// Knob 2. The first time the backpack is found, INTRO_MESSAGE scrolls past;
-/// changing the delay cuts it short.
+/// Knob 2. The first time the backpack is found, INTRO_MESSAGE scrolls past.
+/// Until the first delayed audio comes out, the display counts down the
+/// remaining silence. Changing the delay cuts both short.
 #[embassy_executor::task]
 async fn display_writer(mut display: Display) {
+    // The task first runs when main starts the audio callback, so this is
+    // when the (empty) delay buffer starts filling
+    let audio_started = Instant::now();
+    let mut counting_down = true;
     let mut connected = false;
     let mut warned = false;
     let mut shown = None;
@@ -245,13 +250,24 @@ async fn display_writer(mut display: Display) {
             banner_until = Instant::now() + Duration::from_secs(1);
         }
         if delay != last_delay {
-            // Turning the encoder cuts the step banner short
+            // Turning the encoder cuts the step banner and countdown short
             last_delay = delay;
             banner_until = Instant::MIN;
+            counting_down = false;
         }
+
+        let silence_left = if counting_down {
+            let elapsed = (audio_started.elapsed().as_millis() / 10) as u32;
+            frames_to_hundredths(delay).saturating_sub(elapsed)
+        } else {
+            0
+        };
+        counting_down = silence_left > 0;
 
         let segments = if Instant::now() < banner_until {
             display::text(if fine { b"FINE" } else { b"CRSE" })
+        } else if counting_down {
+            display::seconds(silence_left)
         } else {
             display::seconds(frames_to_hundredths(delay))
         };

@@ -24,7 +24,7 @@ INFO Step size: 0.01s
 INFO Volume: 64%
 ```
 
-The delay is saved 3 seconds after you stop changing it and restored at the next power-up (1.00 s if nothing has been saved). The buffer starts empty, so after power-up the output stays silent for as long as the delay.
+The delay is saved 3 seconds after you stop changing it and restored at the next power-up (1.00 s if nothing has been saved). The buffer starts empty, so after power-up the output stays silent for as long as the delay. After the startup scroll, the display counts down that silence to `0.00` and then shows the delay. Changing the delay during the countdown skips straight to the delay.
 
 ## Building and flashing
 
