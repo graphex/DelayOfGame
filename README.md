@@ -24,7 +24,7 @@ INFO Step size: 0.01s
 INFO Volume: 64%
 ```
 
-The delay goes back to 1 s every time the Pod powers up.
+The delay is saved 3 seconds after you stop changing it and restored at the next power-up (1.00 s if nothing has been saved). The buffer starts empty, so after power-up the output stays silent for as long as the delay.
 
 ## Building and flashing
 

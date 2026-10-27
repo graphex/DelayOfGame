@@ -10,7 +10,7 @@ Secondary goals: learn embedded Rust, microcontrollers, audio DSP and product de
 
 - **Board:** Daisy Pod carrying a Daisy Seed 1.1 (Rev5)
 - **MCU:** STM32H750IBK6, Cortex-M7 at 480 MHz (`daisy_embassy::default_rcc()`)
-- **Memory:** 128 KB internal flash (the firmware runs from here, about 45 KB), 512 KB AXI SRAM, 128 KB DTCM (stack/`.bss`), 64 MB external SDRAM (delay buffer), 8 MB QSPI (unused)
+- **Memory:** 128 KB internal flash (the firmware runs from here, about 45 KB), 512 KB AXI SRAM, 128 KB DTCM (stack/`.bss`), 64 MB external SDRAM (delay buffer), 8 MB QSPI flash (the top two 4 KB sectors hold the saved delay)
 - **Codec:** WM8731, 48 kHz, 24-bit stereo, line in/out on 1/8" jacks. The `seed_1_2` feature selects the PCM3060 for a Seed 1.2.
 - **Controls used:** the Pod encoder (A = D26/PD11, B = D25/PA0, push button = D13/PB6), buttons SW1 = D27/PG9 (−10 s) and SW2 = D28/PA2 (+10 s), Knob 1 (D21/PC4, ADC1) for output volume and Knob 2 (D15/PC0, ADC1) for display brightness. The RGB LEDs and gate inputs are free.
 - **Display:** Adafruit quad 14-segment alphanumeric backpack (HT16K33) on I2C1: SCL = D11/PB8, SDA = D12/PB9, 400 kHz, async with DMA1_CH3/CH4. The firmware scans addresses 0x70–0x77, so the address jumpers don't matter (the current one is at 0x73). Power: + to 3V3 Analog (pin 21), Vi2c to 3V3 Digital (pin 38). VIN (pin 39) sagged too far under load.
@@ -22,6 +22,7 @@ Secondary goals: learn embedded Rust, microcontrollers, audio DSP and product de
 src/main.rs      Board init, SDRAM, encoder task, LED task, audio callback
 src/buffer.rs    DelayBuffer: circular buffer over SDRAM; MAX_DELAY_SECONDS lives here
 src/display.rs   HT16K33 driver over async I2C, 14-segment font, delay formatting, brightness curve
+src/settings.rs  Saves/restores the delay in QSPI flash with non-blocking erase/program
 src/encoder.rs   RotaryEncoder (polled quadrature decoder) and DebouncedButton
 src/volume.rs    Knob-to-gain curve and click-free GainRamp
 examples/blink.rs  LED smoke test
@@ -38,6 +39,7 @@ The linker script comes from `daisy-embassy` (it defines `.sram1_bss` for the DM
 - The display task polls the shared atomics every 20 ms and writes to the backpack only when something changed. It shows `FINE`/`CRSE` for a second after a step toggle, and it re-scans for the backpack every second if it's missing or a write fails.
 - The knob task reads Knob 1 every 10 ms, smooths it, maps it through a squared curve (center = 25% gain) and publishes Q16 gain in `VOLUME_GAIN`. The callback applies it after the delay with `GainRamp`, which limits each block's change and interpolates within the block, so there's no zipper noise. Gain starts at 0, so audio fades in at power-up. It also reads Knob 2 and publishes a brightness level 0–15 in `BRIGHTNESS`, with hysteresis so a knob sitting on a level boundary doesn't flicker.
 - The ADC is clocked from PLL3_R (`config.rcc.mux.adcsel`). `default_rcc()` leaves the ADC clock unset.
+- `delay_saver` writes the delay to QSPI flash once it's been unchanged for 3 s. `Settings` appends 16-byte records (sequence, delay, check, magic) to one of two sectors at 0x7FE000/0x7FF000. When one fills, it erases the other and switches, so a power loss never loses both copies. At boot, `Settings::load` scans both sectors and the highest valid sequence wins.
 - Delay, step size, volume and brightness are logged over defmt/RTT.
 
 ## Gotchas
@@ -49,6 +51,7 @@ The linker script comes from `daisy-embassy` (it defines `.sram1_bss` for the DM
 - **probe-rs leaves the defmt channel in blocking mode.** It switches RTT to `BlockIfFull` on attach and doesn't switch it back when it exits, so the firmware froze once the log buffer filled. `defmt-rtt`'s `disable-blocking-mode` feature makes the firmware ignore that and drop log lines instead.
 - **Attaching a debugger glitches the audio.** probe-rs briefly halts the core on attach, which overruns the SAI. The callback loop logs a warning and restarts instead of panicking, so you hear a blip, not permanent silence.
 - **ST-Link firmware must be current.** On firmware V3J7 (2020), probe-rs failed with USB "pipe stalled" / "interfaces are claimed" errors and OpenOCD couldn't read memory. V3J18 works. Update with ST's STSW-LINK007.
+- **daisy-embassy's `Flash` driver busy-waits.** Its `write` erases a whole 4 KB sector first (up to 300 ms), which would overrun the SAI. `settings.rs` drives the QSPI chip itself in single-line SPI mode and polls the busy bit with `Timer`. Internal flash is a single 128 KB sector that holds the firmware, so it can't store settings.
 - **Changing the delay causes a click.** `set_delay_samples` jumps the read pointer with no crossfade.
 - **Samples are 24-bit in the low bits of a `u32`.** Sign-extend (`(s << 8) as i32 >> 8`) before doing math on them, and mask to `0x00FF_FFFF` afterward. Silence is 0.
 - **No host tests.** The crate is `no_std` for `thumbv7em-none-eabihf`, so `cargo test` doesn't work. `cargo clippy --release --bins --examples` does.

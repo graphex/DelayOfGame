@@ -4,6 +4,7 @@
 mod buffer;
 mod display;
 mod encoder;
+mod settings;
 mod volume;
 
 use buffer::{DelayBuffer, CHANNELS, MAX_DELAY_SECONDS, SAMPLE_RATE};
@@ -23,11 +24,14 @@ use embassy_stm32::time::Hertz;
 use embassy_time::{Delay, Duration, Instant, Timer};
 use encoder::{DebouncedButton, RotaryEncoder};
 use panic_probe as _;
+use settings::Settings;
 use volume::GainRamp;
 
 /// Frames (one sample per channel) per second
 const FRAMES_PER_SECOND: u32 = SAMPLE_RATE as u32;
-const INITIAL_DELAY_FRAMES: u32 = FRAMES_PER_SECOND; // 1 second
+const DEFAULT_DELAY_FRAMES: u32 = FRAMES_PER_SECOND; // 1 second, until one is saved
+/// How long the delay must stay unchanged before it's saved to flash
+const SAVE_AFTER: Duration = Duration::from_secs(3);
 const MAX_DELAY_FRAMES: u32 = FRAMES_PER_SECOND * MAX_DELAY_SECONDS as u32;
 const COARSE_STEP_FRAMES: u32 = FRAMES_PER_SECOND / 10; // 0.1s
 const FINE_STEP_FRAMES: u32 = FRAMES_PER_SECOND / 100; // 0.01s
@@ -39,7 +43,7 @@ const KNOB_FULL_SCALE: u32 = u16::MAX as u32;
 /// Delay in frames, shared between the encoder task and the audio callback.
 /// The delay buffer stores interleaved stereo, so the callback converts
 /// frames to buffer samples by multiplying by CHANNELS.
-static DELAY_FRAMES: AtomicU32 = AtomicU32::new(INITIAL_DELAY_FRAMES);
+static DELAY_FRAMES: AtomicU32 = AtomicU32::new(DEFAULT_DELAY_FRAMES);
 
 /// Output gain in Q16 (volume::UNITY = 1.0), set by Knob 1. Starts at 0 so
 /// audio fades in to the knob's level at power-up instead of popping.
@@ -83,7 +87,7 @@ async fn delay_controls(
     mut minus: DebouncedButton,
     mut plus: DebouncedButton,
 ) {
-    let mut delay_frames = INITIAL_DELAY_FRAMES;
+    let mut delay_frames = DELAY_FRAMES.load(Ordering::Relaxed);
     let mut step_frames = COARSE_STEP_FRAMES;
 
     log_seconds("Delay", delay_frames);
@@ -264,6 +268,26 @@ async fn display_writer(mut display: Display) {
     }
 }
 
+/// Saves the delay to flash once it has stopped changing, so it's restored
+/// at the next power-up
+#[embassy_executor::task]
+async fn delay_saver(mut settings: Settings, mut saved: u32) {
+    let mut last_seen = saved;
+    let mut changed_at = Instant::now();
+    loop {
+        Timer::after_millis(250).await;
+        let delay = DELAY_FRAMES.load(Ordering::Relaxed);
+        if delay != last_seen {
+            last_seen = delay;
+            changed_at = Instant::now();
+        } else if delay != saved && changed_at.elapsed() >= SAVE_AFTER {
+            settings.save(delay).await;
+            saved = delay;
+            log_seconds("Saved delay", delay);
+        }
+    }
+}
+
 /// Heartbeat LED shows the firmware is running
 #[embassy_executor::task]
 async fn led_blinker(mut led: daisy_embassy::led::UserLed<'static>) {
@@ -315,8 +339,18 @@ async fn main(spawner: Spawner) {
     };
     defmt::info!("SDRAM initialized: {} words", ram_slice.len());
 
+    let (settings, saved_delay) = Settings::load(board.flash);
+    let initial_delay = match saved_delay {
+        Some(frames) if frames <= MAX_DELAY_FRAMES => {
+            log_seconds("Restored delay", frames);
+            frames
+        }
+        _ => DEFAULT_DELAY_FRAMES,
+    };
+    DELAY_FRAMES.store(initial_delay, Ordering::Relaxed);
+
     let mut delay_buffer = DelayBuffer::new(ram_slice);
-    delay_buffer.set_delay_samples(INITIAL_DELAY_FRAMES as usize * CHANNELS);
+    delay_buffer.set_delay_samples(initial_delay as usize * CHANNELS);
 
     // Pod encoder: A = D26 (PD11), B = D25 (PA0), push button = D13 (PB6)
     let enc_a = Input::new(board.pins.d26, Pull::Up);
@@ -374,6 +408,7 @@ async fn main(spawner: Spawner) {
         .spawn(knob_reader(adc, board.pins.d21, board.pins.d15))
         .ok();
     spawner.spawn(display_writer(display)).ok();
+    spawner.spawn(delay_saver(settings, initial_delay)).ok();
     spawner.spawn(led_blinker(led)).ok();
 
     defmt::info!(
@@ -383,7 +418,7 @@ async fn main(spawner: Spawner) {
 
     // Runs once per 32-frame block (~0.67ms at 48kHz). Everything else on this
     // executor must yield quickly or the SAI will overrun.
-    let mut last_delay = INITIAL_DELAY_FRAMES;
+    let mut last_delay = initial_delay;
     let mut gain = GainRamp::new(0);
     let mut callback = move |input: &[u32], output: &mut [u32]| {
         let current_delay = DELAY_FRAMES.load(Ordering::Relaxed);
