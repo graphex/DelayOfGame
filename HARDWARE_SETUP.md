@@ -128,6 +128,23 @@ probe-rs list
 # Should show: STM32H750IBKx
 ```
 
+## Display (HT16K33 backpack)
+
+An Adafruit quad 14-segment alphanumeric backpack shows the delay. It's optional: the firmware looks for it every second and runs normally without it.
+
+| Backpack pin | Daisy Seed | Seed pin # |
+|---|---|---|
+| **+** (LED power) | 3V3 Analog | 21 |
+| **Vi2c** (logic level) | 3V3 Digital | 38 |
+| **−** | DGND | 40 |
+| **D** (SDA) | D12 | 13 |
+| **C** (SCL) | D11 | 12 |
+
+- **Address jumpers don't matter.** The firmware tries 0x70–0x77 and logs `Display connected at 0x..`.
+- **Don't power + from VIN (pin 39).** It read 5 V unloaded but sagged badly under the LED load, so the display was dim even at full brightness. Pin 21 is steady and was brighter, with no audible noise. If a hum ever shows up that changes with Knob 2, move + to pin 38 (or to a separate 5 V supply whose ground is tied to pin 40).
+- **Vi2c must be 3.3 V** (pin 38), never 5 V. It sets the I2C pull-up voltage on the Daisy's 3.3 V pins.
+- **Knob 2** sets brightness (0–15).
+
 ## Checking Your Current Setup
 
 Let's see what's detected:

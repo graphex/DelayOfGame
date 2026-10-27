@@ -9,13 +9,14 @@ A Broncos game on TV or streaming runs anywhere from a few seconds to over a min
 ## What Gen 1 is
 
 - **Hardware:** Electrosmith Daisy Pod with a Daisy Seed 1.1. STM32H750 Cortex-M7 at 480 MHz, 64 MB SDRAM, WM8731 codec, 48 kHz / 24-bit stereo line in and out.
-- **Software:** Rust, `no_std`, Embassy async (`daisy-embassy` 0.2.2), about 450 lines.
+- **Software:** Rust, `no_std`, Embassy async (`daisy-embassy` 0.2.2), about 800 lines.
 - **Features:**
   - Stereo delay from 0 to 170 s (nearly all of the 64 MB SDRAM at 32-bit samples)
   - Encoder adjusts the delay in 0.1 s steps, or 0.01 s steps after a button press
-  - Knob 1 controls output volume
+  - Buttons SW1/SW2 jump the delay by −/+10 s
+  - Knob 1 controls output volume; Knob 2 controls display brightness
+  - 4-character 14-segment LED display (Adafruit HT16K33 backpack) shows the delay, e.g. `12.34` or `123.4`
   - LED heartbeat
-  - The delay value can only be read over defmt/RTT logs, which needs an ST-Link and a laptop
 - **Core algorithm:** a circular buffer in SDRAM. Write each 32-frame block at `write_pos` and read from `write_pos − delay`. It costs almost no CPU.
 
 ## What worked
@@ -27,13 +28,13 @@ A Broncos game on TV or streaming runs anywhere from a few seconds to over a min
 
 ## What didn't work, and why
 
-1. **I2C displays caused audio dropouts.** Both an SSD1306 OLED and an HT16K33 LED backpack made the audio buffer overrun.
+1. **Blocking I2C displays caused audio dropouts.** Both an SSD1306 OLED and an HT16K33 LED backpack made the audio buffer overrun.
    - The audio callback has a 0.67 ms deadline per 32-frame block.
    - The I2C drivers blocked for milliseconds (roughly 20–50 ms for full OLED refreshes).
    - Every task, audio included, ran on one cooperative executor, so a blocked display task starved the audio.
-   - This is a software-architecture limit, not a CPU-speed limit. Possible fixes on the same chip: run audio on a high-priority `InterruptExecutor`, use DMA/async I2C or SPI, or update the display in small chunks between blocks.
-2. **No way to see the delay without a laptop.** This is the main usability gap and the main reason for Gen 2.
-3. **Delay was off by 2× until 2026-10-24.** The control code counted frames and the buffer counted interleaved samples, so the real delay was half of what the logs showed and the real maximum was about 30 s instead of the intended 60 s. It's fixed in code but not yet re-checked on hardware. Gen 2 should use one unit (frames) everywhere and test it with a known signal.
+   - **Fixed on 2026-10-26** for the HT16K33: embassy's async I2C with DMA yields during transfers, and the display is written only when the value changes. It was a software-architecture limit, not a CPU-speed limit. A large graphical display would still need care, e.g. an `InterruptExecutor` for audio or SPI with DMA.
+2. **A 4-character display is the limit of what's readable.** The display works, but `123.4` can't show hundredths, and it's small to read from the couch.
+3. **Delay was off by 2× until 2026-10-24.** The control code counted frames and the buffer counted interleaved samples, so the real delay was half of what the logs showed and the real maximum was about 30 s instead of the intended 60 s. It's fixed and was confirmed by ear on 2026-10-25. Gen 2 should use one unit (frames) everywhere and test it with a known signal.
 
 ## Known Gen 1 limitations (carry the fixes into Gen 2)
 
@@ -59,7 +60,7 @@ Worth deciding deliberately. The Daisy can likely hold 3–6 minutes of delay an
 | Audio | Stereo line in/out, 48 kHz, 16-bit or better, under 5 ms added latency, no dropouts |
 | Delay changes | Click-free (crossfade) |
 | Display | Shows the current delay and step size, readable from about 3 m, updates without disturbing audio |
-| Controls | Encoder with acceleration, coarse/fine toggle, preset buttons |
+| Controls | Encoder with coarse/fine toggle (no acceleration; the user preferred a fixed 0.1 s per click), ±10 s buttons, preset buttons |
 | Persistence | Remembers the last delay and at least 4 presets across power cycles |
 | Robustness | Audio runs at a higher priority than UI or network. A UI fault can't stop the audio. |
 | Verification | Test mode that confirms the actual delay equals the displayed delay |

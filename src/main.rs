@@ -2,21 +2,26 @@
 #![no_main]
 
 mod buffer;
+mod display;
 mod encoder;
 mod volume;
 
 use buffer::{DelayBuffer, CHANNELS, MAX_DELAY_SECONDS, SAMPLE_RATE};
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use daisy_embassy::new_daisy_board;
 use daisy_embassy::sdram::SDRAM_SIZE;
 use defmt_rtt as _;
+use display::Display;
 use embassy_executor::Spawner;
 use embassy_stm32::adc::{Adc, SampleTime};
+use embassy_stm32::bind_interrupts;
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::{Input, Pull};
-use embassy_stm32::peripherals::{ADC1, PC4};
-use embassy_time::{Delay, Timer};
-use encoder::RotaryEncoder;
+use embassy_stm32::i2c::{self, I2c};
+use embassy_stm32::peripherals::{ADC1, I2C1, PC0, PC4};
+use embassy_stm32::time::Hertz;
+use embassy_time::{Delay, Duration, Instant, Timer};
+use encoder::{DebouncedButton, RotaryEncoder};
 use panic_probe as _;
 use volume::GainRamp;
 
@@ -26,6 +31,7 @@ const INITIAL_DELAY_FRAMES: u32 = FRAMES_PER_SECOND; // 1 second
 const MAX_DELAY_FRAMES: u32 = FRAMES_PER_SECOND * MAX_DELAY_SECONDS as u32;
 const COARSE_STEP_FRAMES: u32 = FRAMES_PER_SECOND / 10; // 0.1s
 const FINE_STEP_FRAMES: u32 = FRAMES_PER_SECOND / 100; // 0.01s
+const JUMP_FRAMES: u32 = FRAMES_PER_SECOND * 10; // Pod buttons: -/+ 10s
 
 /// Full-scale ADC reading at the default 16-bit resolution
 const KNOB_FULL_SCALE: u32 = u16::MAX as u32;
@@ -39,14 +45,40 @@ static DELAY_FRAMES: AtomicU32 = AtomicU32::new(INITIAL_DELAY_FRAMES);
 /// audio fades in to the knob's level at power-up instead of popping.
 static VOLUME_GAIN: AtomicU32 = AtomicU32::new(0);
 
+/// True while the encoder steps by 0.01s instead of 0.1s
+static STEP_FINE: AtomicBool = AtomicBool::new(false);
+
+/// Display brightness level (0-15), set by Knob 2
+static BRIGHTNESS: AtomicU8 = AtomicU8::new(display::MAX_BRIGHTNESS);
+
+/// I2C transmit buffer for the display. DMA1 can't reach DTCM, so it lives
+/// in D2 SRAM like daisy-embassy's audio buffers.
+#[link_section = ".sram1_bss"]
+static mut DISPLAY_TX: [u8; 1 + 2 * display::DIGITS] = [0; 1 + 2 * display::DIGITS];
+
+bind_interrupts!(struct Irqs {
+    I2C1_EV => i2c::EventInterruptHandler<I2C1>;
+    I2C1_ER => i2c::ErrorInterruptHandler<I2C1>;
+});
+
+fn frames_to_hundredths(frames: u32) -> u32 {
+    frames * 100 / FRAMES_PER_SECOND
+}
+
 /// Log a frame count as seconds with two decimal places
 fn log_seconds(label: &str, frames: u32) {
-    let hundredths = frames * 100 / FRAMES_PER_SECOND;
+    let hundredths = frames_to_hundredths(frames);
     defmt::info!("{}: {}.{:02}s", label, hundredths / 100, hundredths % 100);
 }
 
+/// Encoder turns step the delay; Pod buttons SW1/SW2 jump it by -/+10s
 #[embassy_executor::task]
-async fn encoder_reader(mut encoder: RotaryEncoder, button: ExtiInput<'static>) {
+async fn delay_controls(
+    mut encoder: RotaryEncoder,
+    button: ExtiInput<'static>,
+    mut minus: DebouncedButton,
+    mut plus: DebouncedButton,
+) {
     let mut delay_frames = INITIAL_DELAY_FRAMES;
     let mut step_frames = COARSE_STEP_FRAMES;
 
@@ -57,14 +89,22 @@ async fn encoder_reader(mut encoder: RotaryEncoder, button: ExtiInput<'static>) 
         // 1kHz polling is fast enough to catch every encoder transition
         Timer::after_millis(1).await;
 
-        let increment = encoder.update();
-        if increment != 0 {
-            delay_frames = if increment > 0 {
-                delay_frames
-                    .saturating_add(step_frames)
-                    .min(MAX_DELAY_FRAMES)
+        // Poll every input each tick so the button debouncers keep counting
+        let turn = encoder.update();
+        let minus_pressed = minus.just_pressed();
+        let plus_pressed = plus.just_pressed();
+        let change = match turn {
+            1 => Some((true, step_frames)),
+            -1 => Some((false, step_frames)),
+            _ if minus_pressed => Some((false, JUMP_FRAMES)),
+            _ if plus_pressed => Some((true, JUMP_FRAMES)),
+            _ => None,
+        };
+        if let Some((up, frames)) = change {
+            delay_frames = if up {
+                delay_frames.saturating_add(frames).min(MAX_DELAY_FRAMES)
             } else {
-                delay_frames.saturating_sub(step_frames)
+                delay_frames.saturating_sub(frames)
             };
             DELAY_FRAMES.store(delay_frames, Ordering::Relaxed);
             log_seconds("Delay", delay_frames);
@@ -76,6 +116,7 @@ async fn encoder_reader(mut encoder: RotaryEncoder, button: ExtiInput<'static>) 
             } else {
                 COARSE_STEP_FRAMES
             };
+            STEP_FINE.store(step_frames == FINE_STEP_FRAMES, Ordering::Relaxed);
             log_seconds("Step size", step_frames);
 
             // Wait for release, then let contacts settle so bounce isn't a second press
@@ -87,18 +128,30 @@ async fn encoder_reader(mut encoder: RotaryEncoder, button: ExtiInput<'static>) 
     }
 }
 
-/// Reads Knob 1 and publishes the output volume
+/// Reads Knob 1 (output volume) and Knob 2 (display brightness)
 #[embassy_executor::task]
-async fn volume_reader(mut adc: Adc<'static, ADC1>, mut knob: PC4) {
-    // Exponential moving average, stored scaled by 8 to keep precision
-    let mut smoothed_x8 = adc.blocking_read(&mut knob) as u32 * 8;
+async fn knob_reader(mut adc: Adc<'static, ADC1>, mut knob1: PC4, mut knob2: PC0) {
+    // Exponential moving averages, stored scaled by 8 to keep precision
+    let mut volume_x8 = adc.blocking_read(&mut knob1) as u32 * 8;
+    let mut brightness_x8 = adc.blocking_read(&mut knob2) as u32 * 8;
+    let mut brightness = display::knob_to_brightness(brightness_x8 / 8, KNOB_FULL_SCALE, 0);
+    BRIGHTNESS.store(brightness, Ordering::Relaxed);
     let mut last_percent = u32::MAX;
 
     loop {
-        let raw = adc.blocking_read(&mut knob) as u32;
-        smoothed_x8 = smoothed_x8 - smoothed_x8 / 8 + raw;
+        let raw = adc.blocking_read(&mut knob1) as u32;
+        volume_x8 = volume_x8 - volume_x8 / 8 + raw;
+        let raw = adc.blocking_read(&mut knob2) as u32;
+        brightness_x8 = brightness_x8 - brightness_x8 / 8 + raw;
 
-        let gain = volume::knob_to_gain(smoothed_x8 / 8, KNOB_FULL_SCALE);
+        let level = display::knob_to_brightness(brightness_x8 / 8, KNOB_FULL_SCALE, brightness);
+        if level != brightness {
+            brightness = level;
+            BRIGHTNESS.store(brightness, Ordering::Relaxed);
+            defmt::info!("Brightness: {}", brightness);
+        }
+
+        let gain = volume::knob_to_gain(volume_x8 / 8, KNOB_FULL_SCALE);
         VOLUME_GAIN.store(gain, Ordering::Relaxed);
 
         // Log only meaningful changes so ADC noise doesn't flood the console
@@ -111,6 +164,78 @@ async fn volume_reader(mut adc: Adc<'static, ADC1>, mut knob: PC4) {
         }
 
         Timer::after_millis(10).await;
+    }
+}
+
+/// Shows the delay on the HT16K33 backpack, redrawing only when it changes.
+/// Pressing the encoder shows FINE or CRSE for a second. Brightness follows
+/// Knob 2.
+#[embassy_executor::task]
+async fn display_writer(mut display: Display) {
+    let mut connected = false;
+    let mut warned = false;
+    let mut shown = None;
+    let mut brightness = 0;
+    let mut last_delay = DELAY_FRAMES.load(Ordering::Relaxed);
+    let mut fine = STEP_FINE.load(Ordering::Relaxed);
+    let mut banner_until = Instant::MIN;
+
+    loop {
+        if !connected {
+            brightness = BRIGHTNESS.load(Ordering::Relaxed);
+            match display.init(brightness).await {
+                Ok(address) => defmt::info!("Display connected at {:#x}", address),
+                Err(_) => {
+                    if !warned {
+                        defmt::warn!("Display not found at 0x70-0x77; retrying");
+                        warned = true;
+                    }
+                    Timer::after_secs(1).await;
+                    continue;
+                }
+            }
+            connected = true;
+            warned = false;
+            shown = None;
+        }
+
+        let level = BRIGHTNESS.load(Ordering::Relaxed);
+        if level != brightness {
+            if display.set_brightness(level).await.is_err() {
+                defmt::warn!("Display write failed");
+                connected = false;
+                continue;
+            }
+            brightness = level;
+        }
+
+        let delay = DELAY_FRAMES.load(Ordering::Relaxed);
+        let now_fine = STEP_FINE.load(Ordering::Relaxed);
+        if now_fine != fine {
+            fine = now_fine;
+            banner_until = Instant::now() + Duration::from_secs(1);
+        }
+        if delay != last_delay {
+            // Turning the encoder cuts the step banner short
+            last_delay = delay;
+            banner_until = Instant::MIN;
+        }
+
+        let segments = if Instant::now() < banner_until {
+            display::text(if fine { b"FINE" } else { b"CRSE" })
+        } else {
+            display::seconds(frames_to_hundredths(delay))
+        };
+        if shown != Some(segments) {
+            if display.show(&segments).await.is_err() {
+                defmt::warn!("Display write failed");
+                connected = false;
+                continue;
+            }
+            shown = Some(segments);
+        }
+
+        Timer::after_millis(20).await;
     }
 }
 
@@ -174,9 +299,34 @@ async fn main(spawner: Spawner) {
     let enc_button = ExtiInput::new(board.pins.d13, p.EXTI6, Pull::Up);
     let encoder = RotaryEncoder::new(enc_a, enc_b);
 
-    // Pod Knob 1 = D21 (PC4) sets output volume
+    // Pod buttons: SW1 = D27 (PG9) for -10s, SW2 = D28 (PA2) for +10s
+    let minus = DebouncedButton::new(Input::new(board.pins.d27, Pull::Up));
+    let plus = DebouncedButton::new(Input::new(board.pins.d28, Pull::Up));
+
+    // Pod Knob 1 = D21 (PC4) sets output volume, Knob 2 = D15 (PC0) brightness
     let mut adc = Adc::new(p.ADC1);
     adc.set_sample_time(SampleTime::CYCLES64_5);
+
+    // HT16K33 backpack: SCL = D11 (PB8), SDA = D12 (PB9). The internal
+    // pull-ups keep the bus idle-high when no backpack is plugged in.
+    let mut i2c_config = i2c::Config::default();
+    i2c_config.scl_pullup = true;
+    i2c_config.sda_pullup = true;
+    // A stuck bus busy-waits inside the driver, so give up quickly
+    i2c_config.timeout = Duration::from_millis(2);
+    let i2c = I2c::new(
+        p.I2C1,
+        board.pins.d11,
+        board.pins.d12,
+        Irqs,
+        p.DMA1_CH3,
+        p.DMA1_CH4,
+        Hertz::khz(400),
+        i2c_config,
+    );
+    // SAFETY: the only reference to DISPLAY_TX, handed to the display task
+    let display_tx = unsafe { &mut *core::ptr::addr_of_mut!(DISPLAY_TX) };
+    let display = Display::new(i2c, display_tx);
 
     // Codec (WM8731 or PCM3060) is selected at compile time by feature flag
     let interface = board
@@ -192,12 +342,17 @@ async fn main(spawner: Spawner) {
     };
     defmt::info!("Audio interface started");
 
-    spawner.spawn(encoder_reader(encoder, enc_button)).ok();
-    spawner.spawn(volume_reader(adc, board.pins.d21)).ok();
+    spawner
+        .spawn(delay_controls(encoder, enc_button, minus, plus))
+        .ok();
+    spawner
+        .spawn(knob_reader(adc, board.pins.d21, board.pins.d15))
+        .ok();
+    spawner.spawn(display_writer(display)).ok();
     spawner.spawn(led_blinker(led)).ok();
 
     defmt::info!(
-        "Max delay {}s. Encoder: turn to adjust, press to toggle 0.1s/0.01s steps. Knob 1: volume",
+        "Max delay {}s. Encoder: turn to adjust, press for 0.1s/0.01s steps. SW1/SW2: -/+10s. Knob 1: volume. Knob 2: brightness",
         MAX_DELAY_SECONDS
     );
 

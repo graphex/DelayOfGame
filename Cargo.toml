@@ -26,7 +26,10 @@ critical-section = "1.2.0"
 
 # Debug and logging
 defmt = "0.3.8"
-defmt-rtt = "0.4.1"
+# probe-rs switches the log channel to blocking while attached and doesn't
+# switch it back, so the firmware froze once logs filled up after probe-rs
+# exited. Non-blocking drops log lines instead.
+defmt-rtt = { version = "0.4.1", features = ["disable-blocking-mode"] }
 panic-probe = { version = "0.3.2", features = ["print-defmt"] }
 
 # Utilities

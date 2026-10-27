@@ -9,10 +9,14 @@ This is the **first generation** of the project. It works and is still getting u
 1. Plug the radio source into the Pod's **input** jack and the speakers or receiver into the **output** jack.
 2. Power the Pod over USB. The LED blinks quickly during startup, then pulses once per second.
 3. **Turn the encoder** to change the delay. It starts at 1.00 s and goes from 0 to 170 s.
-4. **Press the encoder** to switch between 0.1 s (coarse) and 0.01 s (fine) steps.
-5. **Knob 1** sets the output volume, from mute to full. Leave it fully clockwise if the output feeds a receiver that has its own volume control.
+4. **Press the encoder** to switch between 0.1 s (coarse) and 0.01 s (fine) steps. The display shows `FINE` or `CRSE` for a second.
+5. **Button SW1** jumps the delay back 10 s; **SW2** jumps it forward 10 s.
+6. **Knob 1** sets the output volume, from mute to full. Leave it fully clockwise if the output feeds a receiver that has its own volume control.
+7. **Knob 2** sets the display brightness.
 
-There's no display. To read the current delay, connect an ST-Link and run `scripts/logs.sh`. It attaches without reflashing; expect a brief audio blip when it connects.
+The display shows the delay as ` 1.00` to `99.99`, then `100.0` to `170.0`. Above 100 s the hundredths aren't shown, but fine steps still apply. Wiring is in [HARDWARE_SETUP.md](HARDWARE_SETUP.md#display-ht16k33-backpack); the Pod works without it.
+
+The delay is also logged. Connect an ST-Link and run `scripts/logs.sh`. It attaches without reflashing; expect a brief audio blip when it connects.
 
 ```
 INFO Delay: 12.40s
@@ -48,6 +52,7 @@ See [HARDWARE_SETUP.md](HARDWARE_SETUP.md) for probe wiring (a verified ST-Link 
 
 - Electrosmith Daisy Pod with a Daisy Seed 1.1: STM32H750 at 480 MHz, 64 MB SDRAM, WM8731 codec
 - 48 kHz, 24-bit stereo, line in and line out on 1/8" jacks
-- Pod rotary encoder with push button (pins D26, D25, D13); Knob 1 (D21) for volume
+- Pod rotary encoder with push button (pins D26, D25, D13); buttons SW1/SW2 (D27, D28) for −/+10 s; Knob 1 (D21) for volume; Knob 2 (D15) for display brightness
+- Adafruit quad 14-segment alphanumeric backpack (HT16K33) on I2C1 (D11 = SCL, D12 = SDA)
 
 ## Go Broncos! 🏈

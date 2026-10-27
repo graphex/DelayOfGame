@@ -1,9 +1,10 @@
-//! Quadrature decoder for the Daisy Pod's rotary encoder
+//! Polled inputs for the Daisy Pod's rotary encoder and push buttons
 //!
 //! Hardware connections:
 //! - Encoder A: PD11 (Seed pin D26)
 //! - Encoder B: PA0 (Seed pin D25)
-//! - Push button: PB6 (Seed pin D13), read directly in main.rs
+//! - Encoder push button: PB6 (Seed pin D13), read directly in main.rs
+//! - Buttons SW1/SW2: PG9/PA2 (Seed pins D27/D28), via DebouncedButton
 
 use embassy_stm32::gpio::Input;
 
@@ -69,5 +70,42 @@ impl RotaryEncoder {
         self.last_b = b;
 
         increment
+    }
+}
+
+/// Consecutive polls (1 ms apart) a button must read the same before a
+/// press or release counts
+const STABLE_POLLS: u8 = 10;
+
+/// Active-low push button that ignores contact bounce
+pub struct DebouncedButton {
+    input: Input<'static>,
+    pressed: bool,
+    stable_polls: u8,
+}
+
+impl DebouncedButton {
+    pub fn new(input: Input<'static>) -> Self {
+        Self {
+            input,
+            pressed: false,
+            stable_polls: 0,
+        }
+    }
+
+    /// Call once per poll. Returns true once for each press.
+    pub fn just_pressed(&mut self) -> bool {
+        let low = self.input.is_low();
+        if low == self.pressed {
+            self.stable_polls = 0;
+            return false;
+        }
+        self.stable_polls += 1;
+        if self.stable_polls < STABLE_POLLS {
+            return false;
+        }
+        self.stable_polls = 0;
+        self.pressed = low;
+        low
     }
 }
