@@ -48,6 +48,10 @@ static VOLUME_GAIN: AtomicU32 = AtomicU32::new(0);
 /// True while the encoder steps by 0.01s instead of 0.1s
 static STEP_FINE: AtomicBool = AtomicBool::new(false);
 
+/// Scrolled across the display once at startup
+const INTRO_MESSAGE: &[u8] = b"Delay of game v2.1";
+const INTRO_STEP_MS: u64 = 200;
+
 /// Display brightness level (0-15), set by Knob 2
 static BRIGHTNESS: AtomicU8 = AtomicU8::new(display::MAX_BRIGHTNESS);
 
@@ -169,12 +173,14 @@ async fn knob_reader(mut adc: Adc<'static, ADC1>, mut knob1: PC4, mut knob2: PC0
 
 /// Shows the delay on the HT16K33 backpack, redrawing only when it changes.
 /// Pressing the encoder shows FINE or CRSE for a second. Brightness follows
-/// Knob 2.
+/// Knob 2. The first time the backpack is found, INTRO_MESSAGE scrolls past;
+/// changing the delay cuts it short.
 #[embassy_executor::task]
 async fn display_writer(mut display: Display) {
     let mut connected = false;
     let mut warned = false;
     let mut shown = None;
+    let mut intro_played = false;
     let mut brightness = 0;
     let mut last_delay = DELAY_FRAMES.load(Ordering::Relaxed);
     let mut fine = STEP_FINE.load(Ordering::Relaxed);
@@ -197,6 +203,25 @@ async fn display_writer(mut display: Display) {
             connected = true;
             warned = false;
             shown = None;
+
+            if !intro_played {
+                intro_played = true;
+                let start_delay = DELAY_FRAMES.load(Ordering::Relaxed);
+                for step in 0..display::scroll_steps(INTRO_MESSAGE) {
+                    if DELAY_FRAMES.load(Ordering::Relaxed) != start_delay {
+                        break;
+                    }
+                    let frame = display::scroll_frame(INTRO_MESSAGE, step);
+                    if display.show(&frame).await.is_err() {
+                        connected = false;
+                        break;
+                    }
+                    Timer::after_millis(INTRO_STEP_MS).await;
+                }
+                if !connected {
+                    continue;
+                }
+            }
         }
 
         let level = BRIGHTNESS.load(Ordering::Relaxed);
